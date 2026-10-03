@@ -286,7 +286,8 @@ def build_parser():
     command.add_argument("--asset", required=True)
     command = sub.add_parser("project-create")
     command.add_argument("--name", required=True)
-    command.add_argument("--upstream-project-id")
+    command.add_argument("--upstream-project-id", "--upstream-id", dest="upstream_project_id")
+    command.add_argument("--canvas-id", help="Separate canvas project ID; upstream ID remains the native project ID")
     command = sub.add_parser("script-import")
     command.add_argument("--project", required=True)
     command.add_argument("--file", required=True)
@@ -400,7 +401,7 @@ def execute(client, args):
     if cmd in {"health", "config", "recipes", "projects"}:
         return client.call("GET", "/" + cmd)
     if cmd == "project-create":
-        return client.call("POST", "/projects", {"name": args.name, **optional(upstream_project_id=args.upstream_project_id)})
+        return client.call("POST", "/projects", {"name": args.name, **optional(upstream_project_id=args.upstream_project_id, canvas_project_id=args.canvas_id)})
     if cmd == "script-import":
         return client.call("POST", "/projects/" + component(args.project) + "/script", {"script": read_text(args.file), "format": "text"})
     if cmd in {"assets", "shots", "jobs"}:

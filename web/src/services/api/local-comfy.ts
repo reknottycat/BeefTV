@@ -7,7 +7,7 @@ const TIMEOUT = 15_000;
 
 export type LocalComfyConfig = { generation_enabled: boolean; storage_scope: "sidecar"; concurrency: number; max_reference_bytes: number; recipe_count: number };
 export type LocalComfyRecipe = { id: string; name: string; mode: string; reference_slots: number; ready: boolean; reference_constraints?: Array<{ role: string; width: number; height: number; mime_types: string[] }> };
-export type LocalComfyProject = { id: string; name: string; upstream_project_id: string | null; storage_scope: "sidecar"; script: string; created_at: string };
+export type LocalComfyProject = { id: string; name: string; upstream_project_id: string | null; canvas_project_id?: string | null; storage_scope: "sidecar"; script: string; created_at: string };
 export type LocalComfyAsset = { id: string; project_id: string; name: string; kind: string; mime_type: string; size: number; sha256: string; source: string; upstream_asset_id: string | null; job_id?: string; shot_id?: string; width?: number; height?: number; content_url: string; created_at: string };
 export type LocalComfyShot = { id: string; project_id: string; name: string; upstream_shot_id: string | null; reference_asset_ids: string[]; created_at: string };
 export type LocalComfyJobStatus = "submitting" | "submitted" | "running" | "completed" | "failed" | "submission_unknown";
@@ -18,7 +18,7 @@ const options = (signal?: AbortSignal) => ({ signal, timeout: TIMEOUT });
 export const getLocalComfyConfig = (signal?: AbortSignal) => http.get<LocalComfyConfig>(`${BASE}/config`, options(signal));
 export const listLocalComfyRecipes = (signal?: AbortSignal) => http.get<LocalComfyRecipe[]>(`${BASE}/recipes`, options(signal));
 export const listLocalComfyProjects = (signal?: AbortSignal) => http.get<LocalComfyProject[]>(`${BASE}/projects`, options(signal));
-export const createLocalComfyProject = (input: { name: string; upstream_project_id?: string }, signal?: AbortSignal) => http.post<LocalComfyProject>(`${BASE}/projects`, input, options(signal));
+export const createLocalComfyProject = (input: { name: string; upstream_project_id?: string; canvas_project_id?: string }, signal?: AbortSignal) => http.post<LocalComfyProject>(`${BASE}/projects`, input, options(signal));
 export const saveLocalComfyScript = (id: string, script: string, signal?: AbortSignal) => http.post<LocalComfyProject>(`${BASE}/projects/${encodeURIComponent(id)}/script`, { script, format: "text" }, options(signal));
 export const listLocalComfyShots = (projectId: string, signal?: AbortSignal) => http.get<LocalComfyShot[]>(`${BASE}/shots`, { ...options(signal), params: { project_id: projectId } });
 export const createLocalComfyShot = (input: { project_id: string; name: string; upstream_shot_id?: string; reference_asset_ids?: string[] }, signal?: AbortSignal) => http.post<LocalComfyShot>(`${BASE}/shots`, input, options(signal));

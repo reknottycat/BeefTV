@@ -287,11 +287,17 @@ class Adapter:
         row = self.db.execute("SELECT payload FROM objects WHERE kind=? AND id=?", (kind, identifier)).fetchone()
         if row is None:
             raise ApiError(404, "not_found", f"{kind} not found")
-        return json.loads(row["payload"])
+        value = json.loads(row["payload"])
+        if kind == "project":
+            value.setdefault("canvas_project_id", "")
+        return value
 
     def list_objects(self, kind, project_id=None):
         rows = self.db.execute("SELECT payload FROM objects WHERE kind=? ORDER BY rowid", (kind,))
         values = [json.loads(row["payload"]) for row in rows]
+        if kind == "project":
+            for value in values:
+                value.setdefault("canvas_project_id", "")
         return [v for v in values if project_id is None or v.get("project_id") == project_id]
 
     def public_asset(self, asset):
@@ -606,11 +612,13 @@ class Adapter:
                         result = [v for v in result if v.get(key) == query[key]]
                 return [self.public_asset(v) for v in result] if parts[0] == "assets" else result
             if path == "/projects" and method == "POST":
-                fields(body, {"name", "upstream_project_id"})
+                fields(body, {"name", "upstream_project_id", "canvas_project_id"})
                 upstream = body.get("upstream_project_id")
                 if upstream is not None:
                     text_field(upstream, "upstream_project_id", 200)
+                canvas = text_field(body.get("canvas_project_id", ""), "canvas_project_id", 200, allow_empty=True)
                 project = {"id": uid(), "name": text_field(body.get("name"), "name", 300), "upstream_project_id": upstream,
+                           "canvas_project_id": canvas,
                            "storage_scope": "sidecar", "script": "", "script_format": "text", "created_at": now()}
                 self.put("project", project)
                 return project

@@ -151,6 +151,91 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn("relative_path", asset)
         self.assertEqual(self.call("GET", f"/assets/{asset['id']}/content")[0].read_bytes(), PNG)
 
+    def test_canvas_project_metadata_independent_persists_after_reopen(self):
+        project = self.call("POST", "/projects", {"name": "Linked project", "upstream_project_id": "native-domain-id", "canvas_project_id": "independent-canvas-id"})
+        self.assertEqual(project["upstream_project_id"], "native-domain-id")
+        self.assertEqual(project["canvas_project_id"], "independent-canvas-id")
+        saved = self.call("POST", f"/projects/{project['id']}/script", {"script": "Saved script\nSecond line"})
+        self.assertEqual(saved["canvas_project_id"], "independent-canvas-id")
+        self.adapter.close()
+        self.adapter = Adapter(self.temp.name, self.client, {"mock_image": recipe()}, enabled=True)
+        reopened = self.call("GET", f"/projects/{project['id']}")
+        self.assertEqual(reopened, saved)
+        self.assertEqual(self.adapter.db.execute("PRAGMA user_version").fetchone()[0], 1)
+
+    def test_canvas_project_id_optional_and_validated(self):
+        self.assertEqual(self.project["canvas_project_id"], "")
+        no_link = self.call("POST", "/projects", {"name": "Unlinked", "canvas_project_id": ""})
+        self.assertEqual(no_link["canvas_project_id"], "")
+        self.assertIsNone(no_link["upstream_project_id"])
+        for invalid in (None, 7, [], "x" * 201):
+            self.assert_reason("invalid_field", lambda value=invalid: self.call("POST", "/projects", {"name": "Invalid", "canvas_project_id": value}))
+        self.assertEqual(self.state["prompts"], [])
+
+    def test_legacy_v1_read_normalization_preserves_database_records(self):
+        import sqlite3
+        directory = Path(self.temp.name) / "legacy-v1"
+        directory.mkdir()
+        legacy_project = {"id": "legacy-project", "name": "Original project", "upstream_project_id": "legacy-native-domain-id",
+                          "storage_scope": "sidecar", "script": "Original script\r\nAll lines retained", "script_format": "text", "created_at": "example-time",
+                          "extra_old_metadata": {"preserve": True}}
+        records = {"project": legacy_project,
+                   "asset": {"id": "legacy-asset", "project_id": "legacy-project", "name": "Original asset", "relative_path": "references/original.png"},
+                   "shot": {"id": "legacy-shot", "project_id": "legacy-project", "name": "Original shot", "reference_asset_ids": ["legacy-asset"]},
+                   "job": {"id": "legacy-job", "project_id": "legacy-project", "shot_id": "legacy-shot", "status": "completed", "prompt_id": "legacy-prompt",
+                           "script_note": "Retained job metadata", "results": [], "archived_asset_ids": ["legacy-asset"]}}
+        db = sqlite3.connect(directory / "adapter.sqlite3")
+        db.executescript("""
+            CREATE TABLE objects(kind TEXT NOT NULL,id TEXT NOT NULL,project_id TEXT,payload TEXT NOT NULL,PRIMARY KEY(kind,id));
+            CREATE TABLE job_keys(request_key TEXT PRIMARY KEY,job_id TEXT NOT NULL,fingerprint TEXT NOT NULL);
+            CREATE TABLE job_identity(project_id TEXT NOT NULL,shot_id TEXT NOT NULL,attempt INTEGER NOT NULL,fingerprint TEXT NOT NULL,job_id TEXT NOT NULL,UNIQUE(project_id,shot_id,attempt),UNIQUE(project_id,shot_id,attempt,fingerprint));
+            PRAGMA user_version=1;
+        """)
+        for kind, value in records.items():
+            db.execute("INSERT INTO objects(kind,id,project_id,payload) VALUES(?,?,?,?)", (kind, value["id"], value.get("project_id"), json.dumps(value)))
+        db.execute("INSERT INTO job_keys(request_key,job_id,fingerprint) VALUES(?,?,?)", ("legacy-key", "legacy-job", "legacy-fingerprint"))
+        db.execute("INSERT INTO job_identity(project_id,shot_id,attempt,fingerprint,job_id) VALUES(?,?,?,?,?)", ("legacy-project", "legacy-shot", 1, "legacy-fingerprint", "legacy-job"))
+        db.commit()
+        original_rows = db.execute("SELECT * FROM objects ORDER BY kind,id").fetchall()
+        original_keys = db.execute("SELECT * FROM job_keys").fetchall()
+        original_identity = db.execute("SELECT * FROM job_identity").fetchall()
+        db.close()
+        for _ in range(2):
+            reopened = Adapter(directory, self.client, {"mock_image": recipe()}, enabled=False)
+            try:
+                project = reopened.dispatch("GET", "/projects/legacy-project")
+                self.assertEqual(project, {**legacy_project, "canvas_project_id": ""})
+                self.assertEqual(reopened.dispatch("GET", "/projects"), [project])
+                for kind in ("asset", "shot", "job"):
+                    self.assertEqual(reopened.get(kind, records[kind]["id"]), records[kind])
+                self.assertEqual([tuple(row) for row in reopened.db.execute("SELECT * FROM objects ORDER BY kind,id")], original_rows)
+                self.assertEqual([tuple(row) for row in reopened.db.execute("SELECT * FROM job_keys")], original_keys)
+                self.assertEqual([tuple(row) for row in reopened.db.execute("SELECT * FROM job_identity")], original_identity)
+                self.assertEqual(reopened.db.execute("PRAGMA user_version").fetchone()[0], 1)
+                self.assertEqual([row[1] for row in reopened.db.execute("PRAGMA table_info(objects)")], ["kind", "id", "project_id", "payload"])
+            finally:
+                reopened.close()
+
+    def test_canvas_project_http_contract_returns_both_ids(self):
+        server = make_server(self.adapter, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = "http://127.0.0.1:" + str(server.server_port) + PREFIX
+        body = json.dumps({"name": "API linked", "upstream_project_id": "native-api-project", "canvas_project_id": "canvas-api-project"}).encode()
+        try:
+            with request.urlopen(request.Request(url + "/projects", data=body, headers={"Content-Type": "application/json"})) as response:
+                envelope = json.load(response)
+            self.assertEqual(envelope["code"], 0)
+            project = envelope["data"]
+            self.assertEqual(project["upstream_project_id"], "native-api-project")
+            self.assertEqual(project["canvas_project_id"], "canvas-api-project")
+            with request.urlopen(url + "/projects/" + project["id"]) as response:
+                self.assertEqual(json.load(response)["data"], project)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_reference_upload_validation_and_no_arbitrary_path(self):
         self.assert_reason("invalid_base64", lambda: self.upload(data_base64="?"))
         self.assert_reason("image_type_mismatch", lambda: self.upload(data_base64=base64.b64encode(b"not image").decode()))

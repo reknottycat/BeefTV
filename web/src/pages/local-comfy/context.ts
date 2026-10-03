@@ -1,4 +1,67 @@
+import type { LocalComfyJob, LocalComfyProject, LocalComfyShot } from "@/services/api/local-comfy";
+import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
+
 export type LocalComfyCanvasContext = { projectId: string; nodeId?: string; shotId?: string; prompt?: string; referenceAssetIds?: string[] };
+
+type ProjectIdentity = Pick<LocalComfyProject, "upstream_project_id" | "canvas_project_id">;
+type CanvasIdentity = Pick<CanvasProject, "id" | "projectId">;
+
+export function localComfyProjectMatchesCanvas(project: ProjectIdentity | undefined, canvas: CanvasIdentity | undefined) {
+    if (!project || !canvas) return false;
+    if (project.canvas_project_id) {
+        return project.canvas_project_id === canvas.id && (!project.upstream_project_id || project.upstream_project_id === canvas.projectId);
+    }
+    // Older UI registrations used the canvas ID as their upstream ID. Read
+    // those records without rewriting the native-project relationship.
+    if (project.upstream_project_id === canvas.id) return true;
+    return Boolean(canvas.projectId && project.upstream_project_id === canvas.projectId);
+}
+
+export function localComfyProjectForCanvas<T extends ProjectIdentity>(projects: T[], canvas: CanvasIdentity | undefined) {
+    const matching = projects.filter((project) => localComfyProjectMatchesCanvas(project, canvas));
+    return matching.find((project) => project.canvas_project_id === canvas?.id)
+        || matching.find((project) => project.upstream_project_id === canvas?.id)
+        || matching[0];
+}
+
+export function localComfyProjectInput(name: string, canvasId: string, canvas: CanvasIdentity | undefined) {
+    if (canvasId && (!canvas || canvas.id !== canvasId)) throw new Error("原画布尚未加载，请先返回画布核对后登记");
+    return { name, upstream_project_id: canvas?.projectId || undefined, canvas_project_id: canvas?.id || undefined };
+}
+
+export function localComfyShotForContext<T extends Pick<LocalComfyShot, "upstream_shot_id">>(shots: T[], context: LocalComfyCanvasContext) {
+    const sourceId = context.shotId || context.nodeId;
+    return sourceId ? shots.find((shot) => shot.upstream_shot_id === sourceId) : shots[0];
+}
+
+export function localComfySourceForContext(context: LocalComfyCanvasContext, canvas: CanvasProject | undefined) {
+    if (!canvas || canvas.id !== context.projectId) return undefined;
+    return canvas.nodes.find((node) => node.id === context.nodeId && (!context.shotId || node.metadata?.directorShotId === context.shotId));
+}
+
+export function localComfyMatchesCanvas(context: LocalComfyCanvasContext, canvas: CanvasProject | undefined, project: LocalComfyProject | undefined, shot: LocalComfyShot | undefined, job?: Pick<LocalComfyJob, "project_id" | "shot_id">) {
+    return Boolean(localComfySourceForContext(context, canvas) && localComfyProjectMatchesCanvas(project, canvas)
+        && shot && shot.project_id === project?.id && shot.upstream_shot_id === (context.shotId || context.nodeId)
+        && (!job || (job.project_id === project?.id && job.shot_id === shot.id)));
+}
+
+export async function loadMissingLocalComfyCanvas<T extends { id: string }>(id: string, dependencies: {
+    readCurrent: () => T | undefined;
+    load: () => Promise<T>;
+    publish: (canvas: T) => void;
+    active: () => boolean;
+}) {
+    const current = dependencies.readCurrent();
+    if (current) return current;
+    const loaded = await dependencies.load();
+    if (loaded.id !== id) throw new Error("读取的画布 ID 与当前入口不一致，已停止加载");
+    if (!dependencies.active()) return undefined;
+    // A draft may have appeared while the backend read was in flight.
+    const draft = dependencies.readCurrent();
+    if (draft) return draft;
+    dependencies.publish(loaded);
+    return loaded;
+}
 
 export function localComfyCanvasPath(context: LocalComfyCanvasContext) {
     const query = new URLSearchParams({ projectId: context.projectId });

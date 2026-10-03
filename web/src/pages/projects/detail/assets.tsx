@@ -453,7 +453,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
                     {showPendingCandidates && pendingCandidates.length ? (
                         <section className="mb-4" aria-label={`待确认${candidateLabel}`}>
                             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5 text-xs font-medium"><Sparkles className="size-3.5 text-foreground/50" />剧情识别出的{candidateLabel}</div>
+                                <div className="flex items-center gap-1.5 text-xs font-medium"><Sparkles className="size-3.5 text-foreground/50" />待确认{candidateLabel}</div>
                                 <span className="text-[var(--fs-tiny)] tabular-nums text-foreground/42">剩余 {candidatesQuery.data?.total || 0} 个待确认</span>
                             </div>
                             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -465,7 +465,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
                                             <span className="grid size-12 shrink-0 place-items-center rounded-md bg-foreground/[.045] text-foreground/25">{isCharacter ? <UserRound className="size-5" /> : <Box className="size-5" />}</span>
                                             <div className="min-w-0 flex-1">
                                                 <div className="truncate text-xs font-semibold">{candidate.name}</div>
-                                                <div className="mt-1 text-[var(--fs-tiny)] text-foreground/42">待确认{categoryLabel(candidate.category)} · 来自章节分析</div>
+                                                <div className="mt-1 text-[var(--fs-tiny)] text-foreground/42">待确认{categoryLabel(candidate.category)} · {candidate.source === "analysis" ? "来自章节分析" : "待确认素材需求"}</div>
                                                 <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1">
                                                     <Button type="text" size="small" icon={<Check className="size-3.5" />} loading={confirming} disabled={Boolean(confirmingCandidateId) && !confirming} onClick={() => confirmMutation.mutate({ candidateId: candidate.id })}>{isCharacter ? "确认新角色" : "确认新增"}</Button>
                                                     {isCharacter && characterAssets.length ? <Dropdown trigger={["click"]} menu={{ items: characterAssets.map((asset) => ({ key: asset.id, label: asset.title })), onClick: ({ key }) => confirmMutation.mutate({ candidateId: candidate.id, targetAssetId: key }) }}><Button type="text" size="small" disabled={Boolean(confirmingCandidateId)}>归并到角色<ChevronDown className="size-3" /></Button></Dropdown> : null}

@@ -2,6 +2,8 @@
 
 本服务是独立、可选的标准库 sidecar。它保留 BeefTV 原有项目编辑和云渠道，不修改上游数据库。项目、文本剧本、角色／场景／道具参考图、镜头和生成血缘保存于独立 SQLite；`upstream_*_id` 是人工或调用方提供的关联标识，不表示对象已经写入 BeefTV。
 
+项目的 `upstream_project_id` 关联 BeefTV 原生 domain project ID；可选 `canvas_project_id` 独立关联画布项目 ID。两种 ID 不能互相替代。它们仅保存关联元数据，不自动创建或修改 Go 服务中的项目、画布、剧本或镜头。
+
 ## 配置与运行
 
 Python 3.10+，仅使用标准库，不安装依赖。状态目录必须显式指定并持久挂载，源码和镜像不能含个人素材、大模型、密钥或真实私网配置。
@@ -66,7 +68,7 @@ I2V 首帧配方可增加 `reference_constraints:[{"role":"first_frame","width":
 | GET `/health` | `{adapter:"ok",comfy_reachable,queue_running,queue_pending,generation_enabled}`；只读 `/queue`，不可达时 counts 为 null |
 | GET `/recipes` | `Recipe[]` |
 | GET `/projects` | `Project[]` |
-| POST `/projects` | `{name,upstream_project_id?}` → `Project` |
+| POST `/projects` | `{name,upstream_project_id?,canvas_project_id?}` → `Project`；canvas ID 为最长 200 字符的字符串，省略或空字符串表示未关联 |
 | GET `/projects/{id}` | `Project` |
 | POST `/projects/{id}/script` | `{script,format?:"text"}` → `Project`；支持空字符串清空，最大 1 MiB 字符 |
 | GET `/assets?project_id=&kind=` | `Asset[]`；筛选器可省略 |
@@ -92,7 +94,7 @@ I2V 首帧配方可增加 `reference_constraints:[{"role":"first_frame","width":
 type Recipe = {id:string; name:string; mode:string; reference_slots:number; ready:boolean;
   reference_constraints?:{role:'first_frame';width:number;height:number;mime_types:['image/png']}[]};
 type Project = {
-  id:string; name:string; upstream_project_id:string|null;
+  id:string; name:string; upstream_project_id:string|null; canvas_project_id:string;
   storage_scope:'sidecar'; script:string; script_format:'text'; created_at:string;
 };
 type Asset = {
@@ -134,6 +136,8 @@ archive 从固定 Comfy `/view` 流式下载，限每个结果 256 MiB、每作�
 ## 状态目录与备份
 
 状态目录有 `adapter.sqlite3`（WAL 模式）、`references/`、`results/`、`staging/`。SQLite schema v1 仅三表：objects 保存 kind/id/project_id/payload；job_keys 保存 request_key/job_id/fingerprint；job_identity 保存唯一 project/shot/attempt/fingerprint/job_id。独立数据库不承载上游项目事务。
+
+`canvas_project_id` 是 objects.payload 中新增的可选项目 JSON 字段，不新增 SQL 列、不升级 schema。旧请求继续可用；旧项目 GET／列表缺少字段时只在返回值补 `""`，不写回旧 payload。既有项目、剧本、资产、镜头和 jobs 保留。旧 v1 程序仍可读取包含额外元数据的项目 JSON；该字段不改变生成或去重合同。
 
 不要直接复制运行中的 SQLite 单文件。用 Python `sqlite3.Connection.backup()` 创建一致数据库副本，或在停止 sidecar 后复制整个状态目录（包含数据库和资源）。升级前备份状态、保留旧镜像／commit，先在备份副本运行同一版本合同测试与静态配方校验；未知 schema 版本服务拒绝启动，不降级覆盖。数据库快照和资产备份需要同一停写窗口，确保两者一致。不得删除或搬走原个人素材进行初始化。
 

@@ -127,6 +127,7 @@ export type ProjectAssetCandidate = {
     shotId?: string;
     name: string;
     category: AssetCategory;
+    source?: string;
     status: "pending_confirmation" | "confirmed" | "ignored" | string;
     detailsJson: string;
     resolvedAssetId?: string;

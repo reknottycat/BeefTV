@@ -206,6 +206,11 @@ class ClientContractTests(unittest.TestCase):
     def test_sidecar_project_script_shot_link_contract(self):
         project = self.run_command("project-create", "--name", "Test", "--upstream-project-id", "native-a")
         self.assertEqual(project["upstream_project_id"], "native-a")
+        self.assertNotIn("canvas_project_id", self.state.requests[-1][3])
+        linked = self.run_command("project-create", "--name", "Test linked", "--upstream-id", "native-a", "--canvas-id", "canvas-b")
+        self.assertEqual(self.state.requests[-1][3], {"name": "Test linked", "upstream_project_id": "native-a", "canvas_project_id": "canvas-b"})
+        self.assertEqual((linked["upstream_project_id"], linked["canvas_project_id"]), ("native-a", "canvas-b"))
+        self.assertFalse(any(method == "POST" and path.endswith("/jobs") for method, path, _, _ in self.state.requests))
         self.run_command("script-import", "--project", "project-a", "--file", str(self.text))
         self.assertEqual(self.state.requests[-1][3], {"script": self.text.read_text(), "format": "text"})
         self.run_command("shot-create", "--project", "project-a", "--name", "One", "--reference", "asset-a", "--upstream-shot-id", "native-shot")

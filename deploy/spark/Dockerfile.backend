@@ -7,9 +7,6 @@ RUN ./plugin-packages/build-packages.sh
 
 FROM golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59 AS backend-build
 ARG GOPROXY=https://proxy.golang.org,direct
-ARG BUILD_VERSION
-ARG BUILD_COMMIT=unknown
-ARG BUILD_TIME=unknown
 ENV GOPROXY=${GOPROXY} GOMAXPROCS=2 GOTOOLCHAIN=local
 RUN apk add --no-cache build-base
 WORKDIR /src/backend
@@ -17,18 +14,21 @@ COPY VERSION /src/VERSION
 COPY backend/go.mod backend/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY backend ./
+ARG BUILD_VERSION
+ARG BUILD_COMMIT=unknown
+ARG BUILD_TIME=unknown
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build set -eu; \
     version="${BUILD_VERSION:-$(tr -d '\r\n' </src/VERSION)}"; \
     ldflags="-s -w -X infinite-canvas/backend/internal/buildinfo.Version=${version} -X infinite-canvas/backend/internal/buildinfo.Commit=${BUILD_COMMIT} -X infinite-canvas/backend/internal/buildinfo.BuildTime=${BUILD_TIME}"; \
     CGO_ENABLED=1 GOOS=linux go build -p 2 -trimpath -ldflags="$ldflags" -o /out/beeftv-backend ./cmd/server
 
 FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && addgroup -g 1000 -S app && adduser -u 1000 -S app -G app
 ARG BUILD_COMMIT=unknown
 ARG SOURCE_REPOSITORY=https://github.com/glanderness/BeefTV
 LABEL org.opencontainers.image.source=${SOURCE_REPOSITORY} \
       org.opencontainers.image.revision=${BUILD_COMMIT}
-RUN apk add --no-cache ca-certificates tzdata wget \
-    && addgroup -g 1000 -S app && adduser -u 1000 -S app -G app
 WORKDIR /app
 COPY --from=backend-build /out/beeftv-backend /usr/local/bin/beeftv-backend
 COPY --from=protocol-package-build /src/plugin-packages /app/plugin-packages

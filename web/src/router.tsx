@@ -37,10 +37,15 @@ function WorkspaceLayout() {
     return <Suspense fallback={fallback}><UserLayout><Outlet /></UserLayout></Suspense>;
 }
 
+const nativeProjectViews = new Set(["overview", "chapters", "workflow", "canvases", "editor", "assets", "settings"]);
+
 function LocalAwareProjectRoute() {
-    const { projectId } = useParams();
+    const { projectId, view, chapterId, unitId, stage } = useParams();
     const localMode = isLocalWorkspaceMode();
-    if (localMode && projectId) return <Navigate to={`/canvas/${projectId}`} replace />;
+    // Explicit project views use the native project API; a bare local project
+    // route keeps its existing canvas alias.
+    const nativeProjectView = Boolean((view && nativeProjectViews.has(view)) || chapterId || (unitId && stage));
+    if (localMode && projectId && !nativeProjectView) return <Navigate to={`/canvas/${projectId}`} replace />;
     return deferred(<ProjectDetailPage />);
 }
 

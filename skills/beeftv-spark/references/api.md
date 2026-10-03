@@ -34,7 +34,7 @@ CLI 的 JSON 标准输出用 ASCII 安全转义；解析后的中文名称和路
 | CLI | 接口 | 参数 |
 | --- | --- | --- |
 | health / config / recipes / projects | GET /health /config /recipes /projects | 无 |
-| project-create | POST /projects | --name，可选 --upstream-project-id |
+| project-create | POST /projects | --name，可选 --upstream-project-id（别名 --upstream-id）与 --canvas-id；body upstream_project_id/canvas_project_id 分别关联原生项目/独立画布 |
 | script-import | POST /projects/{id}/script | --project --file；body script/format:text |
 | assets | GET /assets | 可选 --project --kind character/scene/prop/reference/result |
 | asset-get | GET /assets/{id} | --asset |
@@ -50,6 +50,8 @@ CLI 的 JSON 标准输出用 ASCII 安全转义；解析后的中文名称和路
 | job-watch | GET job + POST poll | --job，可选 --interval（至少1秒）--max-wait（默认55秒）；超时保留同job |
 | job-retry / job-redo | POST /jobs/{id}/retry | --job --request-key --allow-generation；可选 --prompt-file --seed；retry仅failed，redo仅completed |
 | result-download | GET job、asset 元数据及 content | --job --directory；先 archive；保存生成资产字节，不覆盖已有文件 |
+
+Project 的 upstream_project_id 是原生 BeefTV 项目 ID，canvas_project_id 是独立画布 ID；两者可不同，均为可选关联元数据，不会创建、迁移或自动同步原生对象。未提供 --canvas-id 时请求省略该字段；服务器以空字符串返回旧记录的缺省值。电脑端先查询 projects，按已有双 ID 选择登记，不能因名称相似就重复创建 sidecar 项目。
 
 config 公开生成开关、storage_scope:sidecar、concurrency、max_reference_bytes、recipe_count；recipes 公开 id/name/mode/reference_slots/ready/reference_constraints。ready 只表示文件和绑定静态校验，不能证明模型、GPU 或内容验收。generation_gate 不启用服务器开关，只检查当前开关和配方 ready。参考槽数、PNG 首帧尺寸/比例等约束由服务端按已注册配方执行。
 
