@@ -14,6 +14,7 @@ import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
 import { interruptFileUpload } from "@/lib/canvas/canvas-file-upload";
 import { isCanvasWorkflowProvider, resolveCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
+import { isLocalComfyModel } from "@/lib/local-comfy-models";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
@@ -446,6 +447,14 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const storedModel = resolveCanvasGenerationModel(config, node?.metadata?.model, mode);
     const preferredModel = storedModel || resolveCanvasGenerationModel(config, defaultModel, mode) || fallbackModel;
+    if (workflowProvider === "model" && isLocalComfyModel(preferredModel)) return {
+        ...resolveModelRequestConfig(config, preferredModel),
+        taskWorkflowProvider: "model",
+        model: preferredModel,
+        count: "1",
+        imageModel: mode === "image" ? preferredModel : config.imageModel,
+        videoModel: mode === "video" ? preferredModel : config.videoModel,
+    };
     // 先合并节点上的实时选择，再做兼容性匹配。否则路由只看到全局默认值，节点改过的时长、分辨率或布尔能力无法参与分流。
     const workflowParameters = node?.metadata?.workflowParameters || {};
     const runningHubWorkflowId = node?.metadata?.runningHubWorkflowId?.trim() || config.runningHub.workflowId.trim();
@@ -545,6 +554,9 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 
 export function resolveCanvasGenerationModel(config: AiConfig, model: string | undefined, mode: CanvasNodeGenerationMode): string {
     if (!model) return "";
+    // Preserve missing or mismatched local choices so the runtime guard reports
+    // the actual problem instead of silently sending the prompt to a cloud model.
+    if (isLocalComfyModel(model)) return model;
     const normalized = normalizeModelOptionValue(model, config.channels);
     if (!normalized) return "";
     return configuredModelMatchesCapability(config, normalized, mode) ? normalized : "";

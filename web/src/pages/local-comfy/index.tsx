@@ -150,7 +150,7 @@ export default function LocalComfyPage() {
                 if (controller.signal.aborted) return;
                 setConfig(nextConfig); setRecipes(nextRecipes); setProjects(nextProjects);
                 const canvas = useCanvasStore.getState().projects.find((project) => project.id === context.projectId);
-                setProjectId(context.projectId ? localComfyProjectForCanvas(nextProjects, canvas)?.id || "" : nextProjects[0]?.id || "");
+                setProjectId(context.projectId ? localComfyProjectForCanvas(nextProjects, canvas)?.id || "" : "");
             }).catch((failure) => { if (!controller.signal.aborted && !isAbort(failure)) setError(errorText(failure)); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
         return () => { controller.abort(); actionController.current?.abort(); };
     }, [context.projectId]);
@@ -197,7 +197,7 @@ export default function LocalComfyPage() {
     const refresh = () => runAction("读取记录", async (signal) => {
         const [nextConfig, nextRecipes, nextProjects, nextJobs, nextAssets] = await Promise.all([getLocalComfyConfig(signal), listLocalComfyRecipes(signal), listLocalComfyProjects(signal), projectId ? listLocalComfyJobs(projectId, shotId || undefined, signal) : Promise.resolve([]), projectId ? listLocalComfyAssets(projectId, signal) : Promise.resolve([])]);
         setConfig(nextConfig); setRecipes(nextRecipes); setProjects(nextProjects); setJobs(nextJobs); setAssets(nextAssets); setNotice("记录已刷新");
-        if (!projectId) setProjectId(context.projectId ? localComfyProjectForCanvas(nextProjects, canvasProject)?.id || "" : nextProjects[0]?.id || "");
+        if (!projectId) setProjectId(context.projectId ? localComfyProjectForCanvas(nextProjects, canvasProject)?.id || "" : "");
     });
     const submit = () => runAction("提交任务", async (signal) => {
         if (!config?.generation_enabled) throw new Error("当前真实生成未启用，无法提交 GPU 任务");
@@ -257,7 +257,7 @@ export default function LocalComfyPage() {
                 <label className="block space-y-1.5" htmlFor="local-comfy-shot"><span className="text-sm">镜头</span><AppSelect id="local-comfy-shot" className="w-full" value={shotId || undefined} placeholder="选择镜头" options={shots.map((shot) => ({ value: shot.id, label: shot.name }))} onChange={selectShot} disabled={Boolean(busy)} /></label>
                 <div className="flex flex-wrap items-end gap-2"><label className="min-w-40 flex-1 space-y-1.5" htmlFor="local-comfy-shot-name"><span className="text-sm">镜头名称</span><Input id="local-comfy-shot-name" value={shotName} onChange={(event) => setShotName(event.target.value)} /></label><Button disabled={!projectId || !shotName.trim() || Boolean(busy) || Boolean(context.projectId && (!sourceNode || !localComfyProjectMatchesCanvas(selectedProject, canvasProject)))} onClick={() => void runAction("登记镜头", async (signal) => { const currentCanvas = useCanvasStore.getState().projects.find((project) => project.id === context.projectId); if (context.projectId && (!localComfySourceForContext(context, currentCanvas) || !localComfyProjectMatchesCanvas(selectedProject, currentCanvas))) throw new Error("登记项目与原画布镜头不一致，请返回画布核对"); const shot = await createLocalComfyShot({ project_id: projectId, name: shotName.trim(), upstream_shot_id: context.shotId || context.nodeId, reference_asset_ids: references }, signal); setShots((current) => [shot, ...current]); setShotId(shot.id); setNotice("镜头已登记，原导演台编排未改动"); })}>登记镜头</Button></div>
                 <p className="text-xs leading-5 text-foreground/65">本地工作流入口：{entryMode === "image" ? "图片" : "视频"}。{loading ? "正在核对默认配方。" : defaultProblem || `已读取默认配方 ${defaultSelection.recipeId}，默认种子 ${defaultSelection.seed}。`} <Link to="/settings?section=channels" className="underline underline-offset-4">设置本地默认配方</Link></p>
-                <p className="text-xs leading-5 text-foreground/65">当前页面修改仅用于这一镜；核对镜头与参考图后手动提交。原生任务中心统一调度尚未接入。</p>
+                <p className="text-xs leading-5 text-foreground/65">当前页面修改仅用于这一镜；核对镜头与参考图后手动提交。此独立工作流页保留已有作业；从创建页或项目镜头选择本地模型的新任务进入<Link to="/tasks" className="underline underline-offset-4">任务中心</Link>。</p>
                 <label className="block space-y-1.5" htmlFor="local-comfy-recipe"><span className="text-sm">生成配方</span><AppSelect id="local-comfy-recipe" className="w-full" value={recipeId || undefined} placeholder="选择已登记配方" options={[...(recipeId && !recipe ? [{ value: recipeId, label: `${recipeId}（当前未登记）`, disabled: true }] : []), ...recipes.map((item) => ({ value: item.id, label: `${item.name}${item.ready ? "" : "（未配置）"}`, disabled: !item.ready }))]} onChange={(id) => { recipeTouched.current = true; setRecipeId(id); }} disabled={Boolean(busy)} /></label>
                 {recipe ? <p className="text-xs text-foreground/65">需要 {recipe.reference_slots} 张有序参考图；配方已配置不代表模型或 GPU 已验收。</p> : null}
                 {recipe?.reference_constraints?.map((constraint, index) => <p key={`${constraint.role}-${index}`} className="text-xs leading-5 text-foreground/65">{constraint.role === "first_frame" ? "场景首帧" : `参考图 ${index + 1}`}需 PNG，画幅比例与 {constraint.width} × {constraint.height} 相同，尺寸不小于此值。人物身份图应先用于生成场景首帧，不能直接拉伸成横版。</p>)}

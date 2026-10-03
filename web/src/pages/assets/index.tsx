@@ -9,6 +9,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { CollectionGrid, PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { AssetMediaPreview } from "@/components/asset-media-preview";
+import { CachedResourceImage } from "@/components/cached-resource-image";
 import { AssetLibraryCard, AssetLibraryCardMedia } from "@/components/assets/asset-library-card";
 import { Switch } from "@/components/ui/base/switch";
 import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
@@ -259,7 +260,7 @@ export default function AssetsPage() {
     const visibleAssetIds = useMemo(() => visibleAssets.map((asset) => asset.id), [visibleAssets]);
     const allFilteredSelected = visibleAssetIds.length > 0 && visibleAssetIds.every((id) => selectedIds.includes(id));
     const totalAssets = useRemotePage ? remoteTotal : filteredAssets.length;
-    const inlineSearchVisible = searchOpen && viewMode === "library" && visibleAssets.length === 0;
+    const inlineSearchVisible = searchOpen && viewMode === "library";
 
     const kindCounts = useMemo(() => assetCountMap(kindOptions, useRemotePage ? assetPageQuery.data?.kindCounts : undefined, viewMode === "trash" ? trashAssets : activeAssets, (asset) => asset.kind), [activeAssets, assetPageQuery.data?.kindCounts, trashAssets, useRemotePage, viewMode]);
     const categoryCounts = useMemo(() => assetCountMap(categoryOptions, useRemotePage ? assetPageQuery.data?.categoryCounts : undefined, viewMode === "trash" ? trashAssets : activeAssets, (asset) => asset.category || "other"), [activeAssets, assetPageQuery.data?.categoryCounts, trashAssets, useRemotePage, viewMode]);
@@ -1763,12 +1764,13 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: LibraryAss
 
 function AssetImageZoom({ asset }: { asset: LibraryAsset & { kind: "image" } }) {
     const [scale, setScale] = useState(1);
+    const [previewAttempt, setPreviewAttempt] = useState(0);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
     const reset = () => { setScale(1); setOffset({ x: 0, y: 0 }); };
     return (
         <div className="asset-zoom-viewer" onWheel={(event) => { event.preventDefault(); setScale((value) => Math.min(4, Math.max(.25, value * (event.deltaY < 0 ? 1.12 : .89)))); }} onPointerDown={(event) => { if (scale <= 1) return; event.currentTarget.setPointerCapture(event.pointerId); dragRef.current = { x: event.clientX, y: event.clientY, ox: offset.x, oy: offset.y }; }} onPointerMove={(event) => { const drag = dragRef.current; if (!drag) return; setOffset({ x: drag.ox + event.clientX - drag.x, y: drag.oy + event.clientY - drag.y }); }} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }}>
-            <img src={asset.coverUrl || asset.data.dataUrl} alt={asset.title} loading="lazy" decoding="async" className="asset-archive-preview-media asset-zoom-image" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }} />
+            <CachedResourceImage key={`${asset.id}:${previewAttempt}`} storageKey={asset.data.storageKey} src={asset.coverUrl || asset.data.dataUrl} eager alt={asset.title} loading="eager" decoding="async" className="asset-archive-preview-media asset-zoom-image" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }} loadingFallback={<span role="status">正在读取原图…</span>} fallback={<div role="status" className="space-y-2 text-center text-sm text-foreground/65"><p>图片暂时无法读取</p><Button size="small" onClick={() => setPreviewAttempt((value) => value + 1)}>重试读取原图</Button></div>} />
             <div className="asset-zoom-controls" data-canvas-no-zoom>
                 <button type="button" title="缩小" aria-label="缩小" onClick={() => setScale((value) => Math.max(.25, value / 1.25))}><ZoomOut className="size-4" /></button>
                 <button type="button" title="恢复适应" aria-label="恢复适应" onClick={reset}>{Math.round(scale * 100)}%</button>

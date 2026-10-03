@@ -514,6 +514,7 @@ export default function CanvasPage() {
                     </> : <h1>全部项目</h1>}
                 </div>
                 <div className="libtv-project-actions">
+                    <Button onClick={() => navigate("/projects?view=production")}>制作项目</Button>
                     <Input prefix={<Search />} value={keyword} allowClear placeholder="搜索项目" aria-label="搜索项目" onChange={(event) => setKeyword(event.target.value)} />
                     <Button icon={<Trash2 />} onClick={() => setHistoryOpen(true)}>回收站</Button>
                     <Button icon={<FolderPlus />} disabled={!hydrated} onClick={() => createFolder("未命名文件夹")}>新建文件夹</Button>

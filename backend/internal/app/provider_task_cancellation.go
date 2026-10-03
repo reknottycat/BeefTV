@@ -74,6 +74,9 @@ func (s *Service) requestProviderCancellation(ctx context.Context, task *model.T
 		return s.markProviderCancellationUncertain(task, providerCancellationUncertainMessage("上游未返回任务 ID，无法发送取消请求"))
 	}
 
+	if taskInputIsLocalComfy(task.InputJSON) {
+		return s.markProviderCancellationUncertain(task, "仅停止原生任务跟踪；ComfyUI 可能仍在运行，本地适配器不支持单任务终止")
+	}
 	input, err := s.providerCancellationInput(task)
 	if err != nil {
 		return s.markProviderCancellationUncertain(task, providerCancellationUncertainMessage("读取上游取消配置失败")+"："+err.Error())

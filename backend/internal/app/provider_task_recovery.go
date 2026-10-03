@@ -63,6 +63,9 @@ func (s *Service) AdminQueryFailedVideoTask(ctx context.Context, actor *model.Us
 
 func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, claimUserID string) (*ProviderTaskQueryResult, error) {
 	ctx = withProtocolRegistry(ctx, s.protocolRegistry())
+	if task != nil && taskInputIsLocalComfy(task.InputJSON) {
+		return s.queryFailedLocalComfyTask(ctx, task, claimUserID)
+	}
 	if task == nil || task.ID == "" {
 		return nil, BadAuthRequest("任务不存在")
 	}

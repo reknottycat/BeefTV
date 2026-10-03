@@ -6,12 +6,15 @@ import { nanoid } from "nanoid";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { channelConnectionForRequest, type ChannelConnectionFields } from "@/lib/channel-connection";
 import { normalizeLocalComfyDefaults, type LocalComfyDefaults } from "@/lib/local-comfy-defaults";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelCapabilityConfig, localComfyModelDisplayName, localComfySelectableModels, type LocalComfyModelConfig } from "@/lib/local-comfy-models";
+import { useLocalComfyModelCatalog } from "@/lib/use-local-comfy-model-catalog";
 import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { defaultProtocolForCapability, defaultProtocolForModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { defaultModelCapabilityConfig, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
 import type { CapabilitySpec } from "@/services/api/logical-models";
+import { commitModelConfig } from "@/services/model-config-repository";
 
 export type ApiCallFormat = "openai" | "gemini" | "claude";
 export type ChannelInterfaceType = ModelProtocol;
@@ -383,7 +386,7 @@ export type ModelChannel = ChannelConnectionFields & {
     }>;
 };
 
-export type AiConfig = ChannelConnectionFields & {
+export type AiConfig = ChannelConnectionFields & LocalComfyModelConfig & {
     channelMode: "remote";
     baseUrl: string;
     apiKey: string;
@@ -554,6 +557,10 @@ function isTextModelName(model: string) {
 }
 
 export function modelMatchesCapability(model: string, capability?: ModelCapability) {
+    if (isLocalComfyModel(model)) {
+        const profile = localComfyModelCapabilityConfig(model);
+        return !capability ? Boolean(profile) : capability === "image" ? Boolean(profile?.image) : capability === "video" ? Boolean(profile?.video) : false;
+    }
     if (!capability) return true;
     if (capability === "image") return isImageModelName(model);
     if (capability === "video") return isVideoModelName(model);
@@ -564,6 +571,7 @@ export function modelMatchesCapability(model: string, capability?: ModelCapabili
 export function filterModelsByCapability(models: string[], capability?: ModelCapability, channels?: ModelChannel[]) {
     if (!capability) return models;
     return models.filter((model) => {
+        if (isLocalComfyModel(model)) return modelMatchesCapability(model, capability);
         const decoded = decodeChannelModel(model);
         const channel = decoded ? channels?.find((item) => item.id === decoded.channelId) : undefined;
         const modelName = decoded?.model || modelOptionName(model);
@@ -586,7 +594,7 @@ export function filterModelsByCapability(models: string[], capability?: ModelCap
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
     // 选项目录只从当前有效渠道重建，不能信任旧快照里残留的 config.models。
     // 这样旧版本内置模型、未绑定渠道的裸模型不会再次进入创作端。
-    const models = modelOptionsFromChannels(config.channels);
+    const models = [...modelOptionsFromChannels(config.channels), ...localComfySelectableModels(config, capability)];
     if (!capability) return models;
     return filterModelsByCapability(models, capability, config.channels);
 }
@@ -612,7 +620,16 @@ export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" 
     return channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
 }
 
+export function modelsWithConfiguredChannels(models: string[], channels: ModelChannel[]) {
+    return models.filter((value) => {
+        const decoded = decodeChannelModel(value);
+        const channel = decoded ? channels.find((item) => item.id === decoded.channelId) : channels.find((item) => item.models.includes(value));
+        return Boolean(channel && channel.enabled !== false && channel.baseUrl.trim() && channelHasGenerationCredential(channel));
+    });
+}
+
 function isAiConfigReady(config: AiConfig, model: string) {
+    if (isLocalComfyModel(model)) return !localComfyGenerationProblem(config, model);
     if (config.taskWorkflowProvider === "runninghub") {
         const key = config.runningHub.apiKey;
         return Boolean(config.runningHub.enabled && config.runningHub.baseUrl.trim() && key.trim() && config.runningHub.workflowId.trim());
@@ -623,15 +640,24 @@ function isAiConfigReady(config: AiConfig, model: string) {
 
 export const useConfigStore = create<ConfigStore>()(
     persist(
-        (set) => ({
+        (set, get) => ({
             config: defaultConfig,
-            updateConfig: (key, value) =>
+            updateConfig: (key, value) => {
+                const previous = get().config[key];
                 set((state) => ({
                     config: {
                         ...state.config,
                         [key]: value,
                     },
-                })),
+                }));
+                // Native local selections must persist even when the existing
+                // channel-count autosave gate has no cloud channel to observe.
+                // The canonical repository retains write errors and dirty state;
+                // save/flush callers show that state rather than a false success.
+                if ((key === "model" || key === "imageModel" || key === "videoModel") && ((typeof value === "string" && isLocalComfyModel(value)) || (typeof previous === "string" && isLocalComfyModel(previous)))) {
+                    return commitModelConfig(get().config);
+                }
+            },
             replaceConfig: (config) => set({ config }),
             mergeSystemChannels: (channels) =>
                 set((state) => {
@@ -694,6 +720,10 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
         baseUrl: typeof persistedConfig.baseUrl === "string" ? persistedConfig.baseUrl : defaultConfig.baseUrl,
         apiKey: typeof persistedConfig.apiKey === "string" ? persistedConfig.apiKey : "",
         localComfyDefaults: normalizeLocalComfyDefaults(persistedConfig.localComfyDefaults),
+        // Runtime registration and generation permission are never restored from
+        // browser/server snapshots. Only a fresh adapter read can supply them.
+        localComfyModels: undefined,
+        localComfyGenerationEnabled: undefined,
         runningHub: {
             ...defaultConfig.runningHub,
             ...(persistedRunningHub || {}),
@@ -712,6 +742,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
     const imageModels = filterModelsByCapability(models, "image", channels);
     const videoModels = filterModelsByCapability(models, "video", channels);
     const textModels = filterModelsByCapability(models, "text", channels);
+    const configuredTextModels = modelsWithConfiguredChannels(textModels, channels);
     const audioModels = filterModelsByCapability(models, "audio", channels);
     const model = normalizeSelectedModel(config.model || config.imageModel || config.textModel, channels, models);
     return {
@@ -722,10 +753,10 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             channels,
             models,
             model,
-            imageModel: normalizeSelectedModel(config.imageModel || model, channels, imageModels),
-            videoModel: normalizeSelectedModel(config.videoModel, channels, videoModels),
-            textModel: normalizeSelectedModel(config.textModel || model, channels, textModels),
-            audioModel: normalizeSelectedModel(config.audioModel || defaultConfig.audioModel, channels, audioModels),
+            imageModel: normalizeSelectedModel(config.imageModel || model, channels, imageModels, "image"),
+            videoModel: normalizeSelectedModel(config.videoModel, channels, videoModels, "video"),
+            textModel: normalizeSelectedModel(config.textModel || model, channels, configuredTextModels, "text"),
+            audioModel: normalizeSelectedModel(config.audioModel || defaultConfig.audioModel, channels, audioModels, "audio"),
             audioVoice: config.audioVoice || defaultConfig.audioVoice,
             audioFormat: config.audioFormat || defaultConfig.audioFormat,
             audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
@@ -849,7 +880,10 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
     return { ...channel, models, modelProfiles: Array.from(existing.values()) };
 }
 
-function normalizeSelectedModel(value: string, channels: ModelChannel[], options: string[]) {
+function normalizeSelectedModel(value: string, channels: ModelChannel[], options: string[], capability?: ModelCapability) {
+    // A missing local registration is an explicit saved choice, not permission
+    // to silently switch to a cloud model during hydration or late reads.
+    if (isLocalComfyModel(value)) return capability === "text" || capability === "audio" ? options[0] || "" : value;
     const model = normalizeModelOptionValue(value, channels);
     return model && options.includes(model) ? model : options[0] || "";
 }
@@ -857,7 +891,8 @@ function normalizeSelectedModel(value: string, channels: ModelChannel[], options
 export function useEffectiveConfig() {
     const config = useConfigStore((state) => state.config);
     const customChannelsEnabled = useUserStore((state) => state.features.customChannelsEnabled);
-    return useMemo(() => effectiveConfigForCustomChannels(config, customChannelsEnabled), [config, customChannelsEnabled]);
+    const localCatalog = useLocalComfyModelCatalog();
+    return useMemo(() => ({ ...effectiveConfigForCustomChannels(config, customChannelsEnabled), ...localCatalog }), [config, customChannelsEnabled, localCatalog]);
 }
 
 export function effectiveConfigForCustomChannels(config: AiConfig, customChannelsEnabled: boolean): AiConfig {
@@ -910,10 +945,12 @@ export function decodeChannelModel(value: string) {
 }
 
 export function modelOptionName(value: string) {
+    if (isLocalComfyModel(value)) return value.slice("local-comfy:".length);
     return decodeChannelModel(value)?.model || value;
 }
 
 export function modelDisplayName(config: AiConfig, value: string) {
+    if (isLocalComfyModel(value)) return localComfyModelDisplayName(config, value);
     const model = modelOptionName(value);
     const channel = resolveModelChannel(config, value);
     const displayName = channel.modelProfiles?.find((item) => item.model === model)?.displayName?.trim();
@@ -922,11 +959,13 @@ export function modelDisplayName(config: AiConfig, value: string) {
 }
 
 export function modelIcon(config: AiConfig, value: string) {
+    if (isLocalComfyModel(value)) return "";
     const model = modelOptionName(value);
     return resolveModelChannel(config, value).modelProfiles?.find((item) => item.model === model)?.icon || "";
 }
 
 export function modelOptionLabel(config: AiConfig, value: string) {
+    if (isLocalComfyModel(value)) return `${localComfyModelDisplayName(config, value)}（本地 ComfyUI）`;
     const decoded = decodeChannelModel(value);
     if (!decoded) return modelDisplayName(config, value);
     const channel = config.channels.find((item) => item.id === decoded.channelId);
@@ -955,6 +994,7 @@ export function hasSystemModelProfile(channel: ModelChannel, model: string) {
 
 export function normalizeModelOptionValue(value: unknown, channels: ModelChannel[]) {
     const model = typeof value === "string" ? value.trim() : "";
+    if (isLocalComfyModel(model)) return model;
     if (!normalizeRawModelName(model)) return "";
     const decoded = decodeChannelModel(model);
     if (decoded) {
@@ -967,7 +1007,10 @@ export function normalizeModelOptionValue(value: unknown, channels: ModelChannel
     return channel && channel.models.includes(resolved) ? encodeChannelModel(channel.id, resolved) : "";
 }
 
-export function resolveModelChannel(config: AiConfig, value: string) {
+export function resolveModelChannel(config: AiConfig, value: string): ModelChannel {
+    // Legacy display helpers still ask for a channel label. This isolated view
+    // has no credentials and is never inserted into config.channels.
+    if (isLocalComfyModel(value)) return { id: "local-comfy", name: "本地 ComfyUI", baseUrl: "", apiKey: "", apiFormat: "openai" as const, models: [], enabled: true };
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.includes(model));
@@ -984,6 +1027,7 @@ export function channelConnectionSignature(channel: ModelChannel) {
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
+    if (isLocalComfyModel(value || config.model)) return { ...config, model: value || config.model, baseUrl: "", apiKey: "", secretKey: "", headers: [], interfaceType: undefined, channelId: "", credentialRef: undefined };
     const channel = resolveModelChannel(config, value);
     const model = modelOptionName(value || config.model);
     const modelProfile = channel.modelProfiles?.find((item) => item.model === model);

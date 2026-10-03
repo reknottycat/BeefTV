@@ -7,6 +7,7 @@ import { Archive, Check, Eye, FolderOpen, Image as ImageIcon, Palette, Pencil, S
 import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { CanvasStyleDetailModal, CanvasStylePickerModal, resolveProjectCanvasStyle, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelSummary } from "@/lib/local-comfy-models";
 import { createStyleProfileSnapshot, parseStyleProfile, resolveStyleExecutionPlan, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { listProjectAssetsPage, updateProject } from "@/services/api/projects";
@@ -114,19 +115,21 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
             </section>
 
             <section className="border-t border-border/70 py-5">
-                <div className="mb-3"><h3 className="text-sm font-semibold">默认生成模型</h3><p className="mt-0.5 text-[var(--fs-label)] text-foreground/45">分镜图、动作预演与镜头视频优先使用项目默认；未设置或模型不可用时跟随工作台全局默认。</p></div>
+                <div className="mb-3"><h3 className="text-sm font-semibold">默认生成模型</h3><p className="mt-0.5 text-[var(--fs-label)] text-foreground/45">节点选择优先，其次使用项目默认；未设置时跟随工作台全局默认。已保存的本地配方不可用时会提示原因。</p></div>
                 <div className="grid gap-4 md:grid-cols-2">
                     <Field label="默认生图模型">
                         <div className="flex items-center gap-2">
                             <ModelPicker config={effectiveConfig} value={defaultImageModel} capability="image" onChange={setDefaultImageModel} fullWidth placeholder={`跟随全局 · ${modelDisplayName(effectiveConfig, effectiveConfig.imageModel) || "未配置"}`} />
                             {defaultImageModel ? <Button type="text" size="small" onClick={() => setDefaultImageModel("")}>跟随全局</Button> : null}
                         </div>
+                        {isLocalComfyModel(defaultImageModel) ? <p role="status" className="mt-1 text-[var(--fs-label)] text-foreground/45">{localComfyModelSummary(defaultImageModel)}。{localComfyGenerationProblem(effectiveConfig, defaultImageModel)}</p> : null}
                     </Field>
                     <Field label="默认视频模型">
                         <div className="flex items-center gap-2">
                             <ModelPicker config={effectiveConfig} value={defaultVideoModel} capability="video" onChange={setDefaultVideoModel} fullWidth placeholder={`跟随全局 · ${modelDisplayName(effectiveConfig, effectiveConfig.videoModel) || "未配置"}`} />
                             {defaultVideoModel ? <Button type="text" size="small" onClick={() => setDefaultVideoModel("")}>跟随全局</Button> : null}
                         </div>
+                        {isLocalComfyModel(defaultVideoModel) ? <p role="status" className="mt-1 text-[var(--fs-label)] text-foreground/45">{localComfyModelSummary(defaultVideoModel)}。{localComfyGenerationProblem(effectiveConfig, defaultVideoModel)}</p> : null}
                     </Field>
                 </div>
             </section>

@@ -12,11 +12,11 @@ import { WorkspaceState } from "@/components/layout/workspace-state";
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
 import { explainGenerationError } from "@/lib/generation-error";
 import { seedanceTaskRetryWarning } from "@/lib/seedance-channel-warning";
-import { formatTaskKind, operationOptions, statusLabel } from "@/lib/generation-task-display";
+import { formatTaskKind, operationOptions } from "@/lib/generation-task-display";
 import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
 
-import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryFailedVideoProviderTask, queryGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
+import { canRetrieveVideoResult, createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryFailedVideoProviderTask, queryGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -25,10 +25,12 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { formatModelName, getTaskCanvasContext, isTaskFailed, providerCancelStatusLabel, taskMediaKind, taskRetryBlocked } from "./task-shared";
+import { formatModelName, getTaskCanvasContext, isTaskFailed, providerCancelStatusLabel, taskMediaKind, taskRetryBlocked, taskStatusLabel } from "./task-shared";
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
+import { canOperateNativeTask, loadNativeTaskCenterHistory, taskResultMediaUrls } from "@/lib/native-task-center-history";
+import { isLocalComfyModel, localComfyGenerationProblem } from "@/lib/local-comfy-models";
 
 type TaskKindFilter = "all" | "text" | "image" | "video";
 type TaskViewMode = "list" | "grid";
@@ -73,6 +75,7 @@ export default function TasksPage() {
     const { view: viewPreferenceKey, group: groupPreferenceKey } = preferenceKeys();
     const [domainProjects, setDomainProjects] = useState<ProjectSummary[]>([]);
     const [loading, setLoading] = useState(false);
+    const [backendTasksAvailable, setBackendTasksAvailable] = useState<boolean | undefined>();
     const [actingId, setActingId] = useState("");
     const [createOpen, setCreateOpen] = useState(false);
     const [creating, setCreating] = useState(false);
@@ -110,7 +113,7 @@ export default function TasksPage() {
     const modelOptions = useMemo(() => Array.from(new Set(tasks.map((task) => formatModelName(effectiveConfig, task)).filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN")), [effectiveConfig, tasks]);
     const filteredTasks = useMemo(() => tasks.filter((task) => {
         if (statusFilter === "all") return true;
-        if (statusFilter === "active") return task.status === "queued" || task.status === "running";
+        if (statusFilter === "active") return !task.historyOnly && (task.status === "queued" || task.status === "running");
         if (statusFilter === "failed") return task.status === "failed" || task.status === "cancelled";
         if (statusFilter === "succeeded") return task.status === "succeeded";
         return false;
@@ -134,7 +137,7 @@ export default function TasksPage() {
                 const created = new Date(task.createdAt);
                 if (!Number.isNaN(created.getTime()) && created.getFullYear() === now.getFullYear() && created.getMonth() === now.getMonth() && created.getDate() === now.getDate()) today += 1;
             }
-            if (task.status === "queued" || task.status === "running") active += 1;
+            if (!task.historyOnly && (task.status === "queued" || task.status === "running")) active += 1;
             else if (task.status === "succeeded") succeeded += 1;
             else if (task.status === "failed" || task.status === "cancelled") failed += 1;
         }
@@ -246,16 +249,13 @@ export default function TasksPage() {
     }, []);
 
     const loadTasks = useCallback(async (showLoading = false) => {
-        if (localMode) {
-            setTasks(localTaskHistoryFromProjects(useCanvasStore.getState().projects));
-            setLoading(false);
-            return localTaskHistoryFromProjects(useCanvasStore.getState().projects);
-        }
         if (showLoading) setLoading(true);
         try {
-            const next = await listGenerationTasks();
+            const snapshot = await loadNativeTaskCenterHistory({ readNative: () => listGenerationTasks(100), readHistory: () => localMode ? localTaskHistoryFromProjects(useCanvasStore.getState().projects) : [] });
+            setBackendTasksAvailable(snapshot.backendAvailable);
+            const next = snapshot.tasks;
             setTasks((current) => reconcileTaskSummaries(current, next));
-            void syncCompletedCanvasTasks(next);
+            if (snapshot.backendAvailable) void syncCompletedCanvasTasks(next.filter((task) => !task.historyOnly));
             return next;
         } catch (error) {
             if (showLoading) message.error(error instanceof Error ? error.message : "任务加载失败");
@@ -270,7 +270,7 @@ export default function TasksPage() {
             const request = ++detailRequestRef.current;
             setDetailTask(task);
             setTaskLogs([]);
-            if (task.id.startsWith("local:")) {
+            if (!canOperateNativeTask(task)) {
                 setDetailLoading(false);
                 setLogsLoading(false);
                 return;
@@ -305,7 +305,7 @@ export default function TasksPage() {
             const next = await loadTasks(initial);
             if (stopped) return;
             const items = next || tasksRef.current;
-            const hasActiveTasks = items.some((task) => task.status === "queued" || task.status === "running");
+            const hasActiveTasks = items.some((task) => !task.historyOnly && (task.status === "queued" || task.status === "running"));
             timer = window.setTimeout(() => void poll(false), document.hidden ? 60_000 : hasActiveTasks ? 10_000 : 60_000);
         };
         const handleVisibility = () => {
@@ -323,11 +323,15 @@ export default function TasksPage() {
     }, [loadTasks]);
 
     const runAction = async (id: string) => {
-        if (localMode) {
+        const currentTask = tasksRef.current.find((task) => task.id === id);
+        if (!canOperateNativeTask(currentTask)) {
             message.info("本地历史记录不能在任务中心重试，请回到对应画布重新生成");
             return;
         }
-        const currentTask = tasksRef.current.find((task) => task.id === id);
+        if (currentTask?.model && isLocalComfyModel(currentTask.model)) {
+            const problem = localComfyGenerationProblem(effectiveConfig, currentTask.model);
+            if (problem) { message.warning(problem); return; }
+        }
         if (currentTask && taskRetryBlocked(currentTask)) {
             message.warning("请先查看失败原因，不要立即重新提交");
             return;
@@ -359,6 +363,7 @@ export default function TasksPage() {
     };
 
     const queryProviderTask = async (task: GenerationTask) => {
+        if (!canOperateNativeTask(task)) { message.info("当前记录是只读画布历史，不能操作原生任务"); return; }
         const request = detailRequestRef.current;
         setActingId(task.id);
         try {
@@ -367,7 +372,9 @@ export default function TasksPage() {
                 const logs = await listTaskLogs(task.id);
                 if (request === detailRequestRef.current) {
                     setTaskLogs(logs);
-                    message.info("原任务仍在处理中，请稍后再取回结果");
+                    if (result.providerStatus === "failed") message.warning("原任务已失败，未返回可归档结果，请查看错误记录");
+                    else if (result.providerStatus === "submission_unknown") message.warning("原任务提交状态待核验，请核对原任务，避免重复生成");
+                    else message.info("原任务仍在处理中，请稍后再取回结果");
                 }
                 return;
             }
@@ -377,8 +384,9 @@ export default function TasksPage() {
             const logs = await listTaskLogs(task.id).catch(() => undefined);
             if (logs && request === detailRequestRef.current) setTaskLogs(logs);
             if (!localMode) window.dispatchEvent(new CustomEvent("wallet:updated"));
+            window.dispatchEvent(new CustomEvent("canvas:task-updated", { detail: { task: result.task } }));
             void loadTasks(false);
-            if (request === detailRequestRef.current) message.success("视频已取回，未重新生成");
+            if (request === detailRequestRef.current) message.success("素材已取回，未重新生成");
         } catch (error) {
             if (request === detailRequestRef.current) message.error(error instanceof Error ? error.message : "查询上游任务失败");
         } finally {
@@ -437,7 +445,7 @@ export default function TasksPage() {
             <WorkspacePage grid className="library-page task-library-page">
                 <div className="studio-band">
                     <PageHeader
-                        title="创作历史"
+                        title="任务中心"
                         description="查看文本、图片和视频生成任务，跟踪进度并处理失败任务。"
                         meta={<span className="app-projects-header-meta">{taskStats.total} 个任务</span>}
                         actions={
@@ -481,6 +489,7 @@ export default function TasksPage() {
                 </div>
 
                 <div className="collection-content task-collection-content">
+                    {backendTasksAvailable === false ? <p role="status" className="text-sm text-foreground/70">后端任务暂不可读取；当前仅显示只读画布历史，任务状态非实时。刷新后会重新读取原生任务。</p> : null}
                     {loading && !tasks.length ? <div className="library-loading-grid" aria-label="正在加载任务">{Array.from({ length: 8 }, (_, index) => <div key={index} className="library-skeleton" />)}</div> : null}
                     {!loading || tasks.length ? (
                         visibleTasks.length ? (
@@ -534,7 +543,7 @@ export default function TasksPage() {
                 {detailTask ? (
                     <div className="space-y-5">
                         <div className="task-detail-facts grid text-sm sm:grid-cols-2">
-                            <InfoItem label="状态" value={statusLabel[detailTask.status]} />
+                            <InfoItem label="状态" value={taskStatusLabel(detailTask)} />
                             <InfoItem label="画布名称" value={getTaskCanvasContext(detailTask, canvasById, domainProjectNameById).canvasName} />
                             <InfoItem label="任务类型" value={formatTaskKind(detailTask)} />
                             <InfoItem label="模型" value={formatModelName(effectiveConfig, detailTask)} />
@@ -543,12 +552,13 @@ export default function TasksPage() {
                             <InfoItem label="开始时间" value={formatDate(detailTask.startedAt)} />
                             <InfoItem label="完成时间" value={formatDate(detailTask.completedAt)} />
                             <InfoItem label="耗时" value={formatTaskDuration(detailTask)} />
+                            {detailTask.historyOnly ? <InfoItem label="记录来源" value="只读画布历史，任务状态未经后端核验" /> : null}
                             {detailTask.providerCancelStatus ? <InfoItem label="上游取消" value={providerCancelStatusLabel(detailTask)} /> : null}
                             {detailTask.providerCancelRequestedAt ? <InfoItem label="请求取消时间" value={formatDate(detailTask.providerCancelRequestedAt)} /> : null}
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
-                            {canQueryProviderTask(detailTask) ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>取回结果</Button> : null}
-                            {isTaskFailed(detailTask) ? <Button icon={<Bug className="size-4" />} onClick={() => navigate(`/settings?section=diagnostics&taskId=${encodeURIComponent(detailTask.id)}${detailTask.projectId ? `&projectId=${encodeURIComponent(detailTask.projectId)}` : ""}`)}>导出诊断包</Button> : null}
+                            {canQueryProviderTask(detailTask) ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>{detailTask.stage === "submission_unknown" && !detailTask.providerRequestId ? "查询原作业，不重新提交" : "取回结果"}</Button> : null}
+                            {canOperateNativeTask(detailTask) && isTaskFailed(detailTask) ? <Button icon={<Bug className="size-4" />} onClick={() => navigate(`/settings?section=diagnostics&taskId=${encodeURIComponent(detailTask.id)}${detailTask.projectId ? `&projectId=${encodeURIComponent(detailTask.projectId)}` : ""}`)}>导出诊断包</Button> : null}
                         </div>
                         {detailTask.error || isTaskFailed(detailTask) ? (
                             <GenerationFailureNotice
@@ -595,16 +605,16 @@ export default function TasksPage() {
 }
 
 function canQueryProviderTask(task: GenerationTask) {
-    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
+    return canRetrieveVideoResult(task);
 }
 
 function reconcileTaskSummaries(current: GenerationTask[], next: GenerationTask[]) {
     if (current.length === 0) return next;
     const currentById = new Map(current.map((task) => [task.id, task]));
-    let changed = false;
+    let changed = current.length !== next.length;
     const reconciled = next.map((task) => {
         const previous = currentById.get(task.id);
-        if (previous?.updatedAt === task.updatedAt && previous.previewUrl === task.previewUrl && previous.previewPosterUrl === task.previewPosterUrl) return previous;
+        if (previous?.updatedAt === task.updatedAt && previous.previewUrl === task.previewUrl && previous.previewPosterUrl === task.previewPosterUrl && previous.historyOnly === task.historyOnly && previous.status === task.status && previous.progress === task.progress && previous.stage === task.stage) return previous;
         changed = true;
         return task;
     });
@@ -612,7 +622,7 @@ function reconcileTaskSummaries(current: GenerationTask[], next: GenerationTask[
 }
 
 function TaskResultMedia({ value, taskType }: { value?: string; taskType: string }) {
-    const urls = resultMediaUrls(value);
+    const urls = taskResultMediaUrls(value);
     if (!urls.length) return null;
     return (
         <div>
@@ -635,30 +645,6 @@ function TaskResultMedia({ value, taskType }: { value?: string; taskType: string
             </div>
         </div>
     );
-}
-
-function resultMediaUrls(value?: string) {
-    if (!value) return [];
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(value);
-    } catch {
-        parsed = value;
-    }
-    const urls: string[] = [];
-    const visit = (item: unknown, key = "") => {
-        if (typeof item === "string") {
-            const isInlineMedia = /^(data:image\/|data:video\/)/.test(item);
-            const isMediaPath = /\.(png|jpe?g|webp|gif|avif|mp4|webm|mov)(?:$|\?)/i.test(item);
-            const isNamedMediaUrl = /^(https?:|blob:)/.test(item) && /(url|image|video|result|output|media)/i.test(key);
-            if ((isInlineMedia || isMediaPath || isNamedMediaUrl) && !urls.includes(item)) urls.push(item);
-            return;
-        }
-        if (Array.isArray(item)) return item.forEach((value) => visit(value, key));
-        if (item && typeof item === "object") Object.entries(item).forEach(([field, value]) => visit(value, field));
-    };
-    visit(parsed);
-    return urls.slice(0, 12);
 }
 
 function isVideoResult(value: string, taskType: string) {

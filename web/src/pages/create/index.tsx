@@ -9,12 +9,13 @@ import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-p
 import { generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
 import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
 import { localComfyCanvasPath } from "@/pages/local-comfy/context";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelProblem, localComfyModelSummary } from "@/lib/local-comfy-models";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationAllowed, videoDurationOptions } from "@/lib/model-capabilities";
-import { inferVideoOperation, resolveCompatibleModel, mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
+import { inferVideoOperation, modelCompatibilityError, resolveCompatibleModel, mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
 import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -85,6 +86,7 @@ export default function CreatePage() {
         return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, config));
     }, [config, promptOptimizerEnabled, promptOptimizerInstallation]);
     const updateConfig = useConfigStore((state) => state.updateConfig);
+    const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const [conversations, setConversations] = useState<CreationConversation[]>([]);
@@ -153,7 +155,11 @@ export default function CreatePage() {
 				? { size: ratio, videoSeconds: Number(seconds), vquality: videoQuality, videoGenerateAudio: config.videoGenerateAudio === "true", videoWatermark: config.videoWatermark === "true" }
 				: {},
 	}), [attachments, config.transparentBackground, config.videoGenerateAudio, config.videoWatermark, count, hasPrompt, mode, quality, ratio, seconds, videoQuality]);
-    const selectedModel = resolveCompatibleModel(config, preferredModel, modelRequirements) || preferredModel;
+    const selectedModel = mode === "text" || isLocalComfyModel(preferredModel) ? preferredModel : resolveCompatibleModel(config, preferredModel, modelRequirements) || preferredModel;
+    const localModel = isLocalComfyModel(selectedModel);
+    const submissionProblem = localModel
+        ? localComfyModelProblem(config, selectedModel, mode) || localComfyGenerationProblem(config, selectedModel) || modelCompatibilityError(config, selectedModel, modelRequirements)
+        : !selectedModel ? `请先配置${modeLabels[mode]}模型` : !isAiConfigReady(config, selectedModel) ? `${modeLabels[mode]}模型连接未配置，请在设置中填写连接信息` : "";
     const imageProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).image!, [config, selectedModel]);
     const videoProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).video!, [config, selectedModel]);
     const maxReferences = mode === "video" ? videoProfile.operations.includes("image_to_video") ? videoProfile.references.maxImages : 0 : mode === "image" ? imageProfile.references.maxImages : 6;
@@ -210,7 +216,7 @@ export default function CreatePage() {
     }, [marketplaceSkill]);
 
     useEffect(() => {
-        if (!composerPreferencesHydrated || !composerPreferencesInitialized || mode !== "image") return;
+        if (!composerPreferencesHydrated || !composerPreferencesInitialized || mode !== "image" || localModel) return;
         const saved = useCreationPreferencesStore.getState().preferences.image;
         // 优先恢复用户上次选择；只有当前模型不支持该值时，normalizeImageValue 才回退到模型默认值。
         const normalized = normalizeImageValue(imageProfile, {
@@ -221,10 +227,10 @@ export default function CreatePage() {
         setRatio(normalized.size);
         setQuality(normalized.quality);
         setCount(normalized.count);
-    }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, imageProfile]);
+    }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, imageProfile, localModel]);
 
     useEffect(() => {
-        if (!composerPreferencesHydrated || !composerPreferencesInitialized || mode !== "video") return;
+        if (!composerPreferencesHydrated || !composerPreferencesInitialized || mode !== "video" || localModel) return;
         const saved = useCreationPreferencesStore.getState().preferences.video;
         // 优先恢复用户上次选择；只有当前模型不支持该值时，normalizeVideoValue 才回退到模型默认值。
         const normalized = normalizeVideoValue(videoProfile, {
@@ -237,14 +243,15 @@ export default function CreatePage() {
         setVideoQuality(normalized.resolution.replace(/p$/i, ""));
         const maxReferences = videoProfile.operations.includes("image_to_video") ? videoProfile.references.maxImages : 0;
         if (attachments.length > maxReferences) setAttachments((current) => current.slice(0, maxReferences));
-    }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, videoProfile]);
+    }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, videoProfile, localModel]);
 
     useEffect(() => {
+        if (localModel) return;
         const reconciled = reconcileCreationAttachmentLimit(attachments, mentionReferences, maxReferences);
         if (reconciled.attachments === attachments) return;
         setAttachments(reconciled.attachments);
         if (reconciled.removedReferences.length) setPrompt((current) => removeCreationReferenceTokens(current, reconciled.removedReferences));
-    }, [attachments, maxReferences, mentionReferences]);
+    }, [attachments, maxReferences, mentionReferences, localModel]);
 
     useEffect(() => {
         let cancelled = false;
@@ -375,8 +382,8 @@ export default function CreatePage() {
         rememberMode(next);
         const nextModels = selectableModelsByCapability(config, next);
         const current = next === "text" ? config.textModel : next === "image" ? config.imageModel : config.videoModel;
-        if (!nextModels.includes(current) && nextModels[0]) {
-            updateConfig(next === "text" ? "textModel" : next === "image" ? "imageModel" : "videoModel", nextModels[0]);
+        if (next !== "text" && !isLocalComfyModel(current) && !nextModels.includes(current) && nextModels[0]) {
+            updateConfig(next === "image" ? "imageModel" : "videoModel", nextModels[0]);
         }
     };
 
@@ -561,7 +568,12 @@ export default function CreatePage() {
             releaseRetryLock();
             return;
         }
-        if (mode === "video" && !videoDurationAllowed(videoProfile, Number(seconds))) {
+        if (submissionProblem) {
+            toast.warning(submissionProblem);
+            releaseRetryLock();
+            return;
+        }
+        if (!localModel && mode === "video" && !videoDurationAllowed(videoProfile, Number(seconds))) {
             toast.error("当前模型不支持所选视频时长，请重新选择");
             releaseRetryLock();
             return;
@@ -631,17 +643,17 @@ export default function CreatePage() {
         const controller = new AbortController();
         const requestLifecycle = runtime.beginGenerationConsumer(controller.signal);
         abortRef.current = controller;
-        const normalizedImage = mode === "image" ? normalizeImageValue(imageProfile, { size: ratio, quality, count }) : undefined;
-        const normalizedVideo = mode === "video" ? normalizeVideoValue(videoProfile, { seconds, ratio, resolution: videoQuality }) : undefined;
+        const normalizedImage = !localModel && mode === "image" ? normalizeImageValue(imageProfile, { size: ratio, quality, count }) : undefined;
+        const normalizedVideo = !localModel && mode === "video" ? normalizeVideoValue(videoProfile, { seconds, ratio, resolution: videoQuality }) : undefined;
         const requestConfig = {
             ...config,
             model: selectedModel,
             imageModel: selectedModel,
             videoModel: selectedModel,
             textModel: selectedModel,
-            ...(mode === "image"
+            ...(!localModel && mode === "image"
                 ? { size: normalizedImage?.size || ratio, quality: normalizedImage?.quality || quality, count: normalizedImage?.count || count, videoSeconds: config.videoSeconds }
-                : mode === "video"
+                : !localModel && mode === "video"
                   ? { size: normalizedVideo?.ratio ?? ratio, videoSeconds: normalizedVideo?.seconds || seconds, vquality: (normalizedVideo?.resolution ?? videoQuality).replace(/p$/i, "") }
                   : {}),
         };
@@ -957,6 +969,8 @@ export default function CreatePage() {
         onOpenLibrary: () => setLibraryOpen(true),
         onModeChange: selectMode,
         model: selectedModel,
+        submissionProblem,
+        fixedModelSummary: localModel ? localComfyModelSummary(selectedModel) : undefined,
         modelRequirements,
         imageProfile,
         videoProfile,

@@ -68,6 +68,8 @@ type Service struct {
 	beefAPI                  *beefapi.Service
 	mcpOnce                  sync.Once
 	mcpSession               *mcp.Session
+	localComfyMu             sync.Mutex
+	localComfyTransport      localComfyRoundTripper
 }
 
 const taskWorkerConcurrency = 3

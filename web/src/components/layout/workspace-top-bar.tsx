@@ -6,7 +6,7 @@ import { useAppearanceStore } from "@/stores/use-appearance-store";
 
 const PAGE_TITLES: Record<string, string> = {
     home: "创作", create: "创作", projects: "项目", canvas: "自由画布",
-    assets: "资产", skills: "技能", plugins: "插件", settings: "设置",
+    assets: "资产", tasks: "任务中心", skills: "技能", plugins: "插件", settings: "设置",
 };
 
 /** Compatibility workspace chrome retained for non-canvas routes. Canvas owns its own top bar. */

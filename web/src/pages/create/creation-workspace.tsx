@@ -27,6 +27,7 @@ import { VoiceRecordingButton } from "@/components/conversation/voice-recording-
 import { HoverBorderGradient } from "@/components/ui/aceternity/hover-border-gradient";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { ModelPicker } from "@/components/model-picker";
+import { isLocalComfyModel } from "@/lib/local-comfy-models";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { ASSET_CATEGORY_LABELS } from "@/lib/asset-category";
 import { formatShotOrdinal } from "@/lib/shot-label";
@@ -342,6 +343,8 @@ type ComposerProps = {
     setPrompt: (value: string) => void;
     busy: boolean;
     generationActive: boolean;
+    submissionProblem?: string;
+    fixedModelSummary?: string;
     referenceReplacementBusy: boolean;
     attachments: CreationAttachment[];
     referenceImageSize?: { width: number; height: number };
@@ -398,8 +401,9 @@ export function CreationComposer(props: ComposerProps) {
     const [trackState, setTrackState] = useState({ canScrollLeft: false, canScrollRight: false, isExpanded: true, isDragging: false });
     const previousAttachmentCountRef = useRef(0);
     const interactionBusy = props.busy || props.referenceReplacementBusy;
-    const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy;
-    const priceChannel = resolveModelChannel(props.config, props.model);
+    const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy && !props.submissionProblem;
+    const localModel = isLocalComfyModel(props.model);
+    const priceChannel = localModel ? undefined : resolveModelChannel(props.config, props.model);
     const canOptimizePrompt = Boolean(props.promptOptimizerProvider) && (props.mode === "image" || props.mode === "video");
     const optimizerReferences = props.references.filter((reference) => reference.active && reference.kind !== "skill");
     const actionLabel = props.referenceReplacementBusy ? "正在替换参考图" : interactionBusy || (props.generationActive && !canSubmit) ? "生成中" : "发送";
@@ -614,8 +618,8 @@ export function CreationComposer(props: ComposerProps) {
                 </Tooltip> : null}
 				<ModelPicker config={props.config} value={props.model} onChange={props.onModelChange} capability={props.mode} requirements={props.modelRequirements} className="creation-model-picker" placeholder={`选择${modeLabels[props.mode]}模型`} variant="creation" />
                 {props.mode !== "text" && props.onOpenLocalWorkflow ? <Tooltip title="打开保存的本地配方，在工作台核对镜头与参考图后手动生成"><button type="button" className="creation-chat-control" disabled={interactionBusy} onClick={props.onOpenLocalWorkflow} aria-label="打开本地工作流，核对后手动生成"><Clapperboard /><span>本地工作流</span></button></Tooltip> : null}
-                {props.mode === "video" || (props.mode === "image" && imageSettingsSupported) ? <GenerationSettingsMenu {...props} /> : null}
-                {props.mode === "video" ? <DurationMenu profile={props.videoProfile} seconds={props.seconds} onChange={props.setSeconds} /> : null}
+                {!localModel && (props.mode === "video" || (props.mode === "image" && imageSettingsSupported)) ? <GenerationSettingsMenu {...props} /> : null}
+                {!localModel && props.mode === "video" ? <DurationMenu profile={props.videoProfile} seconds={props.seconds} onChange={props.setSeconds} /> : null}
                 {props.mode === "text" ? <>
                     <Tooltip title={interactionBusy ? "生成中，此开关将在下次发送时生效" : (props.textStreaming ? "流式输出已开启" : "流式输出已关闭")}><button type="button" className="creation-chat-control" aria-pressed={props.textStreaming} disabled={interactionBusy} onClick={() => props.setTextStreaming(!props.textStreaming)}><Waves /><span>流式</span></button></Tooltip>
                     <Tooltip title={interactionBusy ? "生成中，此开关将在下次发送时生效" : (props.textThinking ? "思考已开启，会展示模型返回的推理摘要" : "开启模型思考")}><button type="button" className="creation-chat-control" aria-pressed={props.textThinking} disabled={interactionBusy} onClick={() => props.setTextThinking(!props.textThinking)}><Brain /><span>思考</span></button></Tooltip>
@@ -630,14 +634,16 @@ export function CreationComposer(props: ComposerProps) {
                     position: "relative",
                     color: "var(--user-ink)",
                 } as CSSProperties}
-                onClick={interactionBusy ? undefined : props.onSubmit}
+                onClick={canSubmit ? props.onSubmit : undefined}
                 aria-label={actionLabel}
-                title={!canSubmit && !interactionBusy ? "输入创作想法后即可生成" : actionLabel}
+                title={props.submissionProblem || (!canSubmit && !interactionBusy ? "输入创作想法后即可生成" : actionLabel)}
             >
                 {showWorkingGlow ? <WorkingGlow active color="var(--creation-text)" radius="999px" /> : null}
                 <span className="creation-submit-action" aria-hidden>{showWorkingSpinner ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}</span>
             </Button>
         </footer>
+        {props.fixedModelSummary ? <p className="px-4 pb-1 text-[var(--fs-label)] text-[var(--creation-text)] opacity-60">{props.fixedModelSummary}</p> : null}
+        {props.submissionProblem ? <p role="status" className="px-4 pb-3 text-[var(--fs-label)] text-[var(--creation-text)] opacity-60">{props.submissionProblem}</p> : null}
         <CreationMediaPreviewModal url={previewUrl} type={previewType} onClose={() => setPreviewUrl("")} />
         </SpotlightSurface>
     </HoverBorderGradient>;
@@ -650,7 +656,7 @@ export function CreationComposer(props: ComposerProps) {
             prompt={props.prompt}
             generationMode={props.mode === "video" ? "video" : "image"}
             targetModel={modelOptionName(props.model) || props.model}
-            targetProtocol={priceChannel.modelProfiles?.find((item) => item.model === modelOptionName(props.model))?.protocol || priceChannel.interfaceType}
+            targetProtocol={priceChannel?.modelProfiles?.find((item) => item.model === modelOptionName(props.model))?.protocol || priceChannel?.interfaceType}
             config={props.config}
             optimizerModel={props.config.textModel}
             references={optimizerReferences}

@@ -1,6 +1,7 @@
 import { defaultImageCapabilityConfig, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
+import { isLocalComfyModel, localComfyModelCapabilityConfig, localComfyModelDisplayName, localComfyModelProblem } from "@/lib/local-comfy-models";
 import { modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 export type ModelInputSummary = {
@@ -46,6 +47,7 @@ export function groupModelsByDisplayName(config: AiConfig, models: string[]): Di
 }
 
 export function configuredModelDisplayName(config: AiConfig, value: string) {
+    if (isLocalComfyModel(value)) return localComfyModelDisplayName(config, value);
     const model = modelOptionName(value);
     const channel = resolveModelChannel(config, value);
     return channel.modelProfiles?.find((item) => item.model === model)?.displayName?.trim() || model;
@@ -53,6 +55,10 @@ export function configuredModelDisplayName(config: AiConfig, value: string) {
 
 export function modelCompatibilityError(config: AiConfig, model: string, requirements?: ModelRequirements) {
     const capability = requirements?.capability;
+    if (isLocalComfyModel(model)) {
+        const registrationProblem = localComfyModelProblem(config, model, capability);
+        if (registrationProblem) return registrationProblem;
+    }
     if (!capability) return "";
     const input = requirements?.input;
     const visualInputCount = input ? input.imageCount + input.characterCount : 0;
@@ -72,7 +78,7 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
     if (capability === "image") {
         const image = modelCapabilityConfigFor(config, model).image!;
         // 尺寸兼容不依赖输入摘要：无输入时（如画布重试/工具链）也要按尺寸过滤组内模型。
-        if (requirements.imageSize && !image.size.allowCustom && !image.size.values.includes(requirements.imageSize)) return "不支持当前尺寸";
+        if (!isLocalComfyModel(model) && requirements.imageSize && !image.size.allowCustom && !image.size.values.includes(requirements.imageSize)) return "不支持当前尺寸";
         if (!input) return "";
         if (input.videoCount > 0) return "图片模型不支持参考视频";
         if (input.audioCount > 0) return "图片模型不支持参考音频";
@@ -82,11 +88,14 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
 
     if (capability === "video") {
         const profile = modelCapabilityConfigFor(config, model).video!;
-        if (requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
+        if (!isLocalComfyModel(model) && requirements.videoSeconds && !videoDurationAllowed(profile, Number(requirements.videoSeconds))) return "不支持当前视频时长";
         if (!input) return "";
         if (visualInputCount > profile.references.maxImages) return `最多支持 ${profile.references.maxImages} 张参考图`;
         if (input.videoCount > profile.references.maxVideos) return `最多支持 ${profile.references.maxVideos} 个参考视频`;
         if (input.audioCount > profile.references.maxAudios) return `最多支持 ${profile.references.maxAudios} 个参考音频`;
+        // Choose an I2V model before adding its required first frame. Submission
+        // checks the exact required reference count; the picker checks excess.
+        if (isLocalComfyModel(model) && !visualInputCount && !input.videoCount && !input.audioCount) return "";
         const operation = resolveVideoOperation(input, requirements.videoOperation);
         if (operation !== "concat" && !profile.operations.includes(operation)) return `不支持${videoOperationLabel(operation)}`;
         return "";
@@ -262,7 +271,7 @@ export function resolveModelGenerationDefaults(
     // A channel model capability profile is an explicit per-model contract too.
     // The persisted global values are legacy defaults and must not override a
     // model's configured duration, ratio, or resolution on a new canvas node.
-    const hasModelCapabilityProfile = Boolean(profile?.capabilityConfig);
+    const hasModelCapabilityProfile = Boolean(profile?.capabilityConfig || localComfyModelCapabilityConfig(model));
     const source = (key: keyof ModelGenerationDefaults) => explicit[key] ?? (isManagedModel || hasModelCapabilityProfile ? undefined : fallback[key]);
     const capabilityProfile = modelCapabilityConfigFor(config, model);
 

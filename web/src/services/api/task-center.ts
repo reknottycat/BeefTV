@@ -17,6 +17,8 @@ export type GenerationTaskOutput = {
 };
 
 export type GenerationTask = {
+    /** Client projection only: an unverified canvas snapshot cannot operate on a native task. */
+    historyOnly?: boolean;
     failureDiagnostics?: import("@/lib/generation-error").GenerationFailureDiagnostics;
     id: string;
     clientOperationId?: string;
@@ -312,6 +314,10 @@ export function queryFailedVideoProviderTask(id: string) {
 }
 
 export function canRetrieveVideoResult(task: GenerationTask) {
+    if (task.historyOnly || task.id.startsWith("local:")) return false;
+    if (task.provider === "local-comfy" || task.model?.startsWith("local-comfy:")) {
+        return task.status === "failed" && (task.type === "canvas_image" || task.type === "canvas_video") && (Boolean(task.providerRequestId) || task.stage === "submission_unknown");
+    }
     return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
 }
 

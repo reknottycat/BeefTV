@@ -45,6 +45,7 @@ type canvasGenerationInput struct {
 	OnTextDelta      func(string)           `json:"-"`
 	OnReasoningDelta func(string)           `json:"-"`
 	VideoCapability  *VideoCapabilityConfig `json:"-"`
+	LocalComfy       *localComfyTaskInput   `json:"localComfy,omitempty"`
 }
 
 type canvasTextOptions struct {
@@ -286,6 +287,9 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
 		input.Prompt = fallbackPrompt
+	}
+	if input.LocalComfy != nil {
+		return s.runLocalComfyTask(ctx, userID, taskProjectID, taskType, input)
 	}
 	if input.Mode == "" && strings.HasPrefix(taskType, "video_") {
 		input.Mode = "video"

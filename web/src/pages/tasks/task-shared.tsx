@@ -1,6 +1,8 @@
 import { explainGenerationError, shouldBlockAutomaticRetry } from "@/lib/generation-error";
 import type { GenerationTask, TaskStatus } from "@/services/api/task-center";
 import { modelDisplayName, type AiConfig } from "@/stores/use-config-store";
+import { canOperateNativeTask } from "@/lib/native-task-center-history";
+import { statusLabel } from "@/lib/generation-task-display";
 
 export function getTaskCanvasContext(task: GenerationTask, canvasById: Map<string, { title: string; projectId?: string }>, projectNameById: Map<string, string>) {
     if (!task.projectId) return { canvasName: "未绑定画布", projectName: "" };
@@ -15,6 +17,7 @@ export function isTaskFailed(task: GenerationTask) {
 }
 
 export function taskAttentionReason(task: GenerationTask) {
+    if (task.historyOnly) return "只读画布历史；原任务状态未经后端核验，请回到画布查看素材";
     if (task.status === "cancelled") return providerCancelStatusLabel(task);
     const explanation = explainGenerationError({ code: task.errorCode, message: task.error }, { taskId: task.id, providerRequestId: task.providerRequestId, model: task.model, createdAt: task.createdAt, stage: task.stage });
     const text = explanation.message.trim();
@@ -25,10 +28,16 @@ export function taskAttentionReason(task: GenerationTask) {
 }
 
 export function taskRetryBlocked(task: GenerationTask) {
+    if (!canOperateNativeTask(task)) return true;
     return shouldBlockAutomaticRetry({ code: task.errorCode, message: task.error }, task.stage);
 }
 
+export function taskStatusLabel(task: GenerationTask) {
+    return task.historyOnly ? "只读历史" : statusLabel[task.status];
+}
+
 export function providerCancelStatusLabel(task: GenerationTask) {
+    if (task.provider === "local-comfy" || task.model?.startsWith("local-comfy:")) return "已停止本地任务跟踪；ComfyUI 中的生成可能仍在继续，本操作不会中断其他任务";
     if (task.providerCancelStatus === "requested") return "已请求上游取消，正在等待确认";
     if (task.providerCancelStatus === "confirmed") return "上游已确认取消";
     if (task.providerCancelStatus === "uncertain") {

@@ -54,7 +54,7 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if isContentModerationFailure(task.Error) {
 		return nil, BadAuthRequest(contentModerationRetryMessage)
 	}
-	if persistedFailureBlocksRetry(task.Error, task.Stage) {
+	if task.Stage == "submission_unknown" || (!taskInputIsLocalComfy(task.InputJSON) && persistedFailureBlocksRetry(task.Error, task.Stage)) {
 		failure := classifyTaskFailure(errors.New(task.Error))
 		if task.Stage == "submission_unknown" || failure.Category == generation.CategorySubmissionUncertain {
 			return nil, BadAuthRequest(submissionUncertainRetryMessage)
@@ -74,6 +74,11 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	}
 	if err := s.prepareLogicalTaskRetry(task, taskInput); err != nil {
 		return nil, err
+	}
+	if taskInput["localComfy"] != nil {
+		if err := s.prepareLocalComfyRetry(task, taskInput); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.requireCustomChannelsForTaskInput(taskInput); err != nil {
 		return nil, err

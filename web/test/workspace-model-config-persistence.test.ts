@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import * as workspaceBootstrap from "../src/components/workspace/workspace-bootstrap-hydrator";
 import { localWorkspaceConfig } from "../src/lib/user-session";
-import { mergeManagedBeefAPICatalog } from "../src/pages/settings/channel-settings-pane";
+import { mergeManagedBeefAPICatalog, withChannels } from "../src/pages/settings/channel-settings-pane";
 import { createModelChannel, defaultConfig, type AiConfig } from "../src/stores/use-config-store";
 import { createModelConfigRepository } from "../src/services/model-config-repository";
 
@@ -170,6 +170,35 @@ test("model config repository serializes rapid edits and persists the latest sna
 
     expect(writes).toEqual(["4:first", "5:latest"]);
     expect(repository.getState()).toMatchObject({ status: "saved", revision: 6, dirty: false });
+});
+
+test("canonical writes retain native choices and seeds but exclude live catalog and permission", async () => {
+    const writes: AiConfig[] = [];
+    const repository = createModelConfigRepository({
+        read: async () => ({ config: defaultConfig, revision: 1, health: "ready", source: "builtin+local" }),
+        write: async (config, revision) => { writes.push(config); return { saved: true, revision: revision + 1 }; },
+    });
+    const config: AiConfig = { ...defaultConfig, imageModel: "local-comfy:qwen_image_2_1", localComfyDefaults: { image: { recipeId: "qwen_image_2_1", seed: "42" } }, localComfyModels: [{ id: "qwen_image_2_1", name: "Qwen", mode: "t2i", ready: true, reference_slots: 0 }], localComfyGenerationEnabled: true };
+    await repository.hydrate();
+    await repository.commit(config);
+    expect(writes[0]?.imageModel).toBe(config.imageModel);
+    expect(writes[0]?.localComfyDefaults?.image?.seed).toBe("42");
+    expect(writes[0]).not.toHaveProperty("localComfyModels");
+    expect(writes[0]).not.toHaveProperty("localComfyGenerationEnabled");
+    expect(config.localComfyGenerationEnabled).toBe(true);
+    expect(config.localComfyModels).toHaveLength(1);
+});
+
+test("editing a cloud draft preserves native defaults and does not select an unconnected text model", () => {
+    const channel = createModelChannel({ id: "draft", baseUrl: "https://example.test/v1", apiKey: "", models: ["text-draft"], modelProfiles: [{ model: "text-draft", capability: "text", protocol: "chat-completion" }] });
+    const config = { ...defaultConfig, imageModel: "local-comfy:qwen_image_2_1", videoModel: "local-comfy:h3_i2v_turbo4", textModel: "draft::text-draft" };
+    const unconnected = withChannels(config, [channel]);
+    expect(unconnected.imageModel).toBe(config.imageModel);
+    expect(unconnected.videoModel).toBe(config.videoModel);
+    expect(unconnected.textModels).toEqual(["draft::text-draft"]);
+    expect(unconnected.textModel).toBe("");
+    const connected = withChannels(unconnected, [{ ...channel, apiKey: "TEST-MOCK-CREDENTIAL" }]);
+    expect(connected.textModel).toBe("draft::text-draft");
 });
 
 test("model config repository keeps failed edits dirty and retries them on flush", async () => {

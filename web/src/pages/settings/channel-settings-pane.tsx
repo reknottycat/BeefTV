@@ -11,8 +11,9 @@ import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
 import { awaitModelConfigSaved, manualChannelModelPatch } from "@/lib/channel-settings-actions";
 import { channelConnectionForRequest, hasCustomChannelConnection, isStandardChannelConnectionProtocol, validateChannelConnection } from "@/lib/channel-connection";
 import { TEXT_PROVIDER_PRESETS, textProviderChannelDraft, type TextProviderPresetId } from "@/lib/text-provider-presets";
+import { isLocalComfyModel } from "@/lib/local-comfy-models";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
-import { channelHasGenerationCredential, channelHasManagedBeefAPICredential, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefAPIChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { channelHasGenerationCredential, channelHasManagedBeefAPICredential, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefAPIChannel, modelOptionsFromChannels, modelsWithConfiguredChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { localWorkspaceConfig } from "@/lib/user-session";
@@ -784,7 +785,7 @@ export function modelConfigChannelPresentation(channel: ModelChannel) {
     };
 }
 
-function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
+export function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
     const models = modelOptionsFromChannels(channels);
     const imageModels = filterModelsByCapability(models, "image", channels);
     const videoModels = filterModelsByCapability(models, "video", channels);
@@ -801,9 +802,9 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         videoModels,
         textModels,
         audioModels,
-        imageModel: normalizeDefaultModel(config.imageModel, imageModels),
-        videoModel: normalizeDefaultModel(config.videoModel, videoModels),
-        textModel: normalizeDefaultModel(config.textModel, textModels),
+        imageModel: isLocalComfyModel(config.imageModel) ? config.imageModel : normalizeDefaultModel(config.imageModel, imageModels),
+        videoModel: isLocalComfyModel(config.videoModel) ? config.videoModel : normalizeDefaultModel(config.videoModel, videoModels),
+        textModel: normalizeDefaultModel(config.textModel, modelsWithConfiguredChannels(textModels, channels)),
         audioModel: normalizeDefaultModel(config.audioModel, audioModels),
     };
 }

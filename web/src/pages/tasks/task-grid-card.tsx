@@ -4,13 +4,12 @@ import { Tooltip } from "@/components/ui/base/tooltip";
 import { Eye, FileText, Image as ImageIcon, RotateCcw, Video } from "lucide-react";
 
 import { MediaPreview } from "@/components/media-preview";
-import { statusLabel } from "@/lib/generation-task-display";
 import type { GenerationTask } from "@/services/api/task-center";
-import { isTaskFailed, statusDotClassName, taskAttentionReason, TaskDate, taskRetryBlocked } from "./task-shared";
+import { isTaskFailed, statusDotClassName, taskAttentionReason, TaskDate, taskRetryBlocked, taskStatusLabel } from "./task-shared";
 import { TaskVideoThumbnail } from "./task-video-thumbnail";
 
 export function TaskGridCard({ task, actingId, onOpen, onRetry }: { task: GenerationTask; actingId: string; onOpen: () => void; onRetry: () => void }) {
-    const isActive = task.status === "queued" || task.status === "running";
+    const isActive = !task.historyOnly && (task.status === "queued" || task.status === "running");
     const isFailed = isTaskFailed(task);
     const retryDisabled = taskRetryBlocked(task);
     const isVideo = task.previewKind === "video";
@@ -32,7 +31,7 @@ export function TaskGridCard({ task, actingId, onOpen, onRetry }: { task: Genera
                         <IconButton size="sm" variant="ghost" icon={Eye} aria-label="查看详情" onClick={onOpen} />
                     </Tooltip>
                     {isFailed ? (
-                        <Tooltip title={retryDisabled ? "请先查看原因，不要立即重新提交" : "重试任务"}>
+                        <Tooltip title={task.historyOnly ? "只读画布历史，请回到画布查看" : retryDisabled ? "请先查看原因，不要立即重新提交" : "重试任务"}>
                             <Button
                                 type="text"
                                 size="small"
@@ -52,8 +51,8 @@ export function TaskGridCard({ task, actingId, onOpen, onRetry }: { task: Genera
                 </button>
                 <div className="task-grid-meta">
                     <span className={`task-grid-status ${isFailed ? "is-failed" : isActive ? "is-active" : task.status === "succeeded" ? "is-success" : ""}`}>
-                        <i className={statusDotClassName(task.status)} />
-                        {statusLabel[task.status]}
+                        <i className={statusDotClassName(task.historyOnly ? "cancelled" : task.status)} />
+                        {taskStatusLabel(task)}
                     </span>
                     <span className="task-grid-date">
                         <TaskDate value={task.createdAt} />

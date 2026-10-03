@@ -87,6 +87,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err := s.validateRetryTaskType(userID, taskType, normalizedInput); err != nil {
 		return nil, err
 	}
+	if normalizedInput["localComfy"] != nil || strings.HasPrefix(req.Model, localComfyModelPrefix) || req.Provider == "local-comfy" {
+		return s.createLocalComfyTask(userID, req, taskType, prompt, normalizedInput)
+	}
 	normalizedInput, err = s.resolveManagedBeefAPISecrets(normalizedInput)
 	if err != nil {
 		return nil, err

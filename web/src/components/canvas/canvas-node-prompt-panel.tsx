@@ -6,13 +6,14 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Keyboard
 import { ArrowLeftRight, ArrowUp, AtSign, Boxes, Camera, ChevronDown, FileText, GripVertical, ImageIcon, ImagePlus, Link2, LoaderCircle, Maximize2, Music2, Pencil, SlidersHorizontal, UserRound, Video, WandSparkles, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, modelOptionName, resolveModelChannel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelOptionName, resolveModelChannel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelProblem, localComfyModelSummary } from "@/lib/local-comfy-models";
 import { resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { resolveCanvasGenerationModel } from "@/lib/canvas/canvas-project-generation";
 import { clampPromptEditorModalSize, PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
-import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, defaultImageParamsForModel, type ModelRequirements } from "@/lib/model-selection";
+import { modelCompatibilityError, modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, defaultImageParamsForModel, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -37,6 +38,8 @@ export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
 type CanvasNodePromptPanelProps = {
     projectId: string;
+    generationConfig?: AiConfig;
+    generationConfigProblem?: string;
     node: CanvasNodeData;
     isRunning: boolean;
     onPromptChange: (nodeId: string, prompt: string) => void;
@@ -70,11 +73,12 @@ const PROMPT_EDITOR_MODAL_WIDTH = "min(1200px, 92vw)";
 const PROMPT_EDITOR_MODAL_DEFAULT_WIDTH = 1200;
 const PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT = 420;
 
-export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
-    const globalConfig = useEffectiveConfig();
+export function CanvasNodePromptPanel({ projectId, generationConfig, generationConfigProblem, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
+    const effectiveConfig = useEffectiveConfig();
+    const globalConfig = generationConfig || effectiveConfig;
+    const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
-    const localOnly = true;
     const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
     const promptOptimizerEnabled = usePluginStore((state) => state.pluginStates[PROMPT_OPTIMIZER_PLUGIN_ID]?.effectiveEnabled ?? Boolean(state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID)?.enabled));
     const simpleMode = workspaceMode === "simple";
@@ -136,7 +140,11 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         if (!promptOptimizerEnabled || !promptOptimizerInstallation || !promptOptimizerPlugin.createPromptOptimizer) return null;
         return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, globalConfig));
     }, [globalConfig, promptOptimizerEnabled, promptOptimizerInstallation]);
-    const priceChannel = resolveModelChannel(config, config.model);
+    const localModel = isLocalComfyModel(config.model);
+    const priceChannel = localModel ? undefined : resolveModelChannel(config, config.model);
+    const submissionProblem = ((mode === "image" || mode === "video") ? generationConfigProblem : "") || (localModel
+        ? localComfyModelProblem(config, config.model, mode) || localComfyGenerationProblem(config, config.model) || modelCompatibilityError(config, config.model, resolvedRequirements)
+        : !isAiConfigReady(config, config.model) ? "模型连接未配置，请在设置中填写连接信息" : "");
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
     const hasVideoPromptTools = mode === "video" && !simpleMode && videoFrameOptions.length > 0;
@@ -164,7 +172,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         if (!rect?.width || !rect.height) return { width: PROMPT_EDITOR_MODAL_DEFAULT_WIDTH, height: PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT };
         return { width: Math.round(rect.width), height: Math.round(rect.height) };
     };
-    const isSubmitDisabled = !isRunning && !prompt.trim();
+    const isSubmitDisabled = Boolean(submissionProblem) || (!isRunning && !prompt.trim());
     const canExpandPrompt = mode === "image" || mode === "video";
     const canOptimizePrompt = Boolean(promptOptimizerProvider) && canExpandPrompt;
     const isPortraitTexture = mode === "image" && Boolean(node.metadata?.portraitTexture);
@@ -227,7 +235,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return false;
+        if (!text || isRunning || isSubmitDisabled) return false;
         onGenerate(node.id, mode, text);
         return true;
     };
@@ -328,7 +336,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 }
                 onClick={() => (expanded ? submitExpandedPrompt() : submit())}
                 aria-label={actionLabel}
-                title={actionLabel}
+                title={submissionProblem || actionLabel}
             >
                 <span className="canvas-node-composer-submit-action" aria-hidden>
                     {isRunning ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <ArrowUp className="size-3.5" strokeWidth={2.4} />}
@@ -362,8 +370,8 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                         fullWidth
                         config={config}
                         value={config.model}
-                        placeholder={localOnly ? localModelPlaceholder(mode) : undefined}
-                        onChange={(model) => onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model })}
+                        placeholder={`选择${modeDisplayName(mode)}模型`}
+                        onChange={(model) => onConfigChange(node.id, mode === "image" && !isLocalComfyModel(model) ? { model, ...defaultImageParamsForModel(config, model) } : { model })}
                         capability={mode}
                         requirements={resolvedRequirements}
                         onMissingConfig={() => navigateToSettings({ continueCreation: true })}
@@ -395,7 +403,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                 className="!w-14 !h-7 [&_.ant-input-number-input]:!text-[var(--fs-tiny)]"
                             />
                         </Tooltip>
-                    ) : mode === "image" ? (
+                    ) : localModel ? null : mode === "image" ? (
                         // 图片模式下，显示相机配置与镜头配置
                         <>
                             <CanvasCameraControlPopover
@@ -440,6 +448,11 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 </div>
             </div>
         );
+
+    const renderSubmissionNotice = () => <>
+        {localModel ? <p className="px-2.5 py-1 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>{localComfyModelSummary(config.model)}</p> : null}
+        {submissionProblem ? <p role="status" className="px-2.5 pb-2 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>{submissionProblem}</p> : null}
+    </>;
 
     const renderPromptEditor = (expanded: boolean, fill = false) => {
         const bounds = expanded ? expandedPromptBounds : promptBounds;
@@ -511,7 +524,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
             prompt={prompt}
             generationMode={mode === "image" || mode === "video" ? mode : "image"}
             targetModel={modelOptionName(config.model) || config.model}
-            targetProtocol={priceChannel.modelProfiles?.find((item) => item.model === modelOptionName(config.model))?.protocol || priceChannel.interfaceType}
+            targetProtocol={priceChannel?.modelProfiles?.find((item) => item.model === modelOptionName(config.model))?.protocol || priceChannel?.interfaceType}
             config={globalConfig}
             optimizerModel={globalConfig.textModel}
             references={activeReferences}
@@ -556,6 +569,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
             ) : null}
 
             {renderComposerControls(false)}
+            {renderSubmissionNotice()}
 
             <Modal
                 className="canvas-prompt-editor-modal"
@@ -585,6 +599,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                             </div>
                         ) : null}
                         <div className="shrink-0">{renderComposerControls(true)}</div>
+                        <div className="shrink-0">{renderSubmissionNotice()}</div>
                     </div>
                     <PromptModalResizeHandle size={expandedModalSize} measure={measureExpandedModalSize} onResize={setExpandedModalSize} accent={theme.node.muted} />
                 </div>
@@ -1046,18 +1061,12 @@ function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
     return type === CanvasNodeType.Text || type === CanvasNodeType.Skill ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";
 }
 
-function localModelPlaceholder(mode: CanvasNodeGenerationMode) {
-    if (mode === "image") return "Lib Image 2.5 Pro";
-    if (mode === "video") return "2.0";
-    if (mode === "audio") return "Seed Audio 1.0";
-    return "GVLM 3.1";
-}
-
 export function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode, requirements: ModelRequirements): AiConfig {
     const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel;
     const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const preferredModel = resolveCanvasGenerationModel(globalConfig, node.metadata?.model, mode) || resolveCanvasGenerationModel(globalConfig, defaultModel, mode) || fallbackModel;
-    const model = resolveCompatibleModel(globalConfig, preferredModel, mode === "image" ? { ...requirements, imageSize: node.metadata?.size || globalConfig.size || defaultConfig.size } : requirements) || preferredModel;
+    const model = mode === "text" ? node.metadata?.model?.trim() || globalConfig.textModel : isLocalComfyModel(preferredModel) ? preferredModel : resolveCompatibleModel(globalConfig, preferredModel, mode === "image" ? { ...requirements, imageSize: node.metadata?.size || globalConfig.size || defaultConfig.size } : requirements) || preferredModel;
+    if (isLocalComfyModel(model)) return { ...globalConfig, model };
     const defaults = resolveModelGenerationDefaults(
         globalConfig,
         model,

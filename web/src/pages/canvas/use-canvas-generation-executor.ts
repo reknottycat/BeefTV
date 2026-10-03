@@ -5,6 +5,7 @@ import { App } from "antd";
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { buildGenerationConfig, isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelProblem } from "@/lib/local-comfy-models";
 import { canvasGenerationPromptMetadata, canvasGenerationRequestFingerprint, runCanvasGenerationSubmissionOnce } from "@/lib/canvas/canvas-generation-submission";
 import { isGenerationTaskCapacityError } from "@/lib/canvas/canvas-generation-batch";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
@@ -17,7 +18,7 @@ import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
 import type { GenerationTask } from "@/services/api/task-center";
-import { useConfigStore, useEffectiveConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
+import { useConfigStore, useEffectiveConfig, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { seedanceReferenceRatioWarning } from "@/lib/seedance-channel-warning";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
@@ -30,6 +31,8 @@ import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked } from ".
 type UseCanvasGenerationExecutorOptions = {
     projectId: string;
     domainProjectId?: string;
+    generationConfig?: AiConfig;
+    generationConfigProblem?: string;
     addedSkills: Skill[];
     assets: Asset[];
     nodesRef: { current: CanvasNodeData[] };
@@ -63,6 +66,8 @@ export type CanvasNodeGenerationOptions = {
 export function useCanvasGenerationExecutor({
     projectId,
     domainProjectId,
+    generationConfig: projectGenerationConfig,
+    generationConfigProblem,
     addedSkills,
     assets,
     nodesRef,
@@ -79,7 +84,8 @@ export function useCanvasGenerationExecutor({
     applyGenerationTaskResult,
 }: UseCanvasGenerationExecutorOptions) {
     const { message, modal } = App.useApp();
-    const effectiveConfig = useEffectiveConfig();
+    const globalConfig = useEffectiveConfig();
+    const effectiveConfig = projectGenerationConfig || globalConfig;
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const submissionLocksRef = useRef(new Map<string, Promise<unknown>>());
     const confirmDuplicateSubmission = useCallback(
@@ -113,7 +119,22 @@ export function useCanvasGenerationExecutor({
                         message.info("合并成片节点不直接重新生成，请重新选择源视频合并");
                         return;
                     }
+                    if ((mode === "image" || mode === "video") && generationConfigProblem) {
+                        message.warning(generationConfigProblem);
+                        return;
+                    }
+                    if (mode === "text" && !sourceNode?.metadata?.model?.trim() && !effectiveConfig.textModel.trim()) {
+                        message.warning("文本模型未配置，请先在设置中选择可用的文本连接");
+                        return;
+                    }
                     let generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
+                    if (isLocalComfyModel(generationConfig.model)) {
+                        const problem = localComfyModelProblem(generationConfig, generationConfig.model, mode) || localComfyGenerationProblem(generationConfig, generationConfig.model);
+                        if (problem) {
+                            message.warning(problem);
+                            return;
+                        }
+                    }
                     const hasLiveBatchChildren =
                         sourceNode?.type === CanvasNodeType.Image && (sourceNode.metadata?.batchChildIds || []).some((childId) => nodesRef.current.some((node) => node.id === childId && node.metadata?.batchRootId === sourceNode.id));
                     const hasStaleImageBatchState =
@@ -133,6 +154,7 @@ export function useCanvasGenerationExecutor({
                         );
                     }
                     if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                        message.warning("模型连接未配置，请在设置中填写连接信息");
                         navigateToSettings({ continueCreation: true });
                         return;
                     }
@@ -152,7 +174,7 @@ export function useCanvasGenerationExecutor({
                     // 模型视频接口才把提示词视为纯文本输入。
                     const usesWorkflowProvider = Boolean(mode !== "text" && generationConfig.taskWorkflowProvider && generationConfig.taskWorkflowProvider !== "model");
                     // 普通视频协议只保留输入框文本（显式 @文本 引用仍会展开为真实内容）；声明式工作流还要保留连接媒体。
-                    const promptOnly = mode === "video" && !usesWorkflowProvider;
+                    const promptOnly = mode === "video" && !usesWorkflowProvider && !isLocalComfyModel(generationConfig.model);
                     try {
                         const baseContext = buildNodeGenerationContext(
                             nodeId,
@@ -404,6 +426,7 @@ export function useCanvasGenerationExecutor({
             confirmDuplicateSubmission,
             domainProjectId,
             effectiveConfig,
+            generationConfigProblem,
             finishGenerationRequest,
             isAiConfigReady,
             message,

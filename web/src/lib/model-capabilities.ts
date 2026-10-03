@@ -1,5 +1,6 @@
 import type { ModelProtocol, ModelProtocolWorkflow } from "@/lib/model-protocols";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
+import { localComfyModelCapabilityConfig } from "@/lib/local-comfy-models";
 
 export type ModelCapabilityConfig = {
     version: number;
@@ -438,6 +439,8 @@ export function modelCapabilityConfigFor(
     config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> },
     model: string,
 ) {
+    const localProfile = localComfyModelCapabilityConfig(model);
+    if (localProfile) return { ...defaultModelCapabilityConfig(), ...localProfile };
     const separator = model.indexOf("::");
     const channelId = separator >= 0 ? model.slice(0, separator) : "";
     const modelName = separator >= 0 ? model.slice(separator + 2) : model;

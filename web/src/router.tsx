@@ -1,8 +1,8 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { createBrowserRouter, Navigate, Outlet, useLocation, useParams } from "react-router";
+import { createBrowserRouter, Navigate, Outlet, useLocation, useParams, useSearchParams } from "react-router";
 
 import { FullScreenLoader, WorkspaceRouteLoader } from "@/components/ui/aceternity/full-screen-loader";
-import { loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadHomePage, loadProjectDetailPage } from "@/lib/workspace-route-modules";
+import { loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadHomePage, loadProjectDetailPage, loadProjectsPage, loadTasksPage } from "@/lib/workspace-route-modules";
 import { CanvasRefreshShell } from "@/pages/canvas/canvas-refresh-shell";
 import RouteErrorPage from "@/pages/route-error";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
@@ -12,13 +12,14 @@ const HomePage = lazy(loadHomePage);
 const CanvasPage = lazy(loadCanvasPage);
 const CanvasProjectPage = lazy(loadCanvasProjectPage);
 const CreatePage = lazy(loadCreatePage);
+const TasksPage = lazy(loadTasksPage);
 const NotFound = lazy(() => import("@/pages/not-found"));
 const PluginsPage = lazy(() => import("@/pages/plugins"));
 const EagleLibraryPage = lazy(() => import("@/pages/plugins/eagle"));
 const ProjectDetailPage = lazy(loadProjectDetailPage);
+const ProjectsPage = lazy(loadProjectsPage);
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const LocalComfyPage = lazy(() => import("@/pages/local-comfy"));
-const TestVoiceRecording = lazy(() => import("@/pages/test-voice-recording"));
 const UserLayout = lazy(() => import("@/layouts/user-layout"));
 const RequireFeature = lazy(() => import("@/components/workspace/require-feature").then((module) => ({ default: module.RequireFeature })));
 
@@ -38,6 +39,11 @@ function WorkspaceLayout() {
 }
 
 const nativeProjectViews = new Set(["overview", "chapters", "workflow", "canvases", "editor", "assets", "settings"]);
+
+function ProjectLibraryRoute() {
+    const [searchParams] = useSearchParams();
+    return deferred(searchParams.get("view") === "production" ? <ProjectsPage /> : <CanvasPage />);
+}
 
 function LocalAwareProjectRoute() {
     const { projectId, view, chapterId, unitId, stage } = useParams();
@@ -65,9 +71,11 @@ function LegacyProjectAliasRoute() {
 function devRoutes() {
     const FolderPreviewLab = lazy(() => import("@/pages/dev/folder-preview-lab"));
     const DirectorReproLab = lazy(() => import("@/pages/dev/director-repro-lab"));
+    const TestVoiceRecording = lazy(() => import("@/pages/test-voice-recording"));
     return [
         { path: "/dev/folders", element: fullScreenDeferred(<FolderPreviewLab />), errorElement: <RouteErrorPage /> },
         { path: "/dev/director-repro", element: fullScreenDeferred(<DirectorReproLab />), errorElement: <RouteErrorPage /> },
+        { path: "/test-voice-recording", element: fullScreenDeferred(<TestVoiceRecording />), errorElement: <RouteErrorPage /> },
     ];
 }
 
@@ -81,8 +89,7 @@ export const router = createBrowserRouter([
             { path: "/create", element: deferred(<CreatePage />) },
             {
                 path: "/tasks",
-                // 任务页暂不开放，保留路由以避免旧链接进入半成品界面。
-                element: <Navigate to="/" replace />,
+                element: deferred(<TasksPage />),
             },
             { path: "/assets", element: deferred(<AssetsPage />) },
             { path: "/local-comfy", element: deferred(<LocalComfyPage />) },
@@ -98,16 +105,15 @@ export const router = createBrowserRouter([
                 element: <RequireFeature feature="pluginCenterEnabled">{deferred(<EagleLibraryPage />)}</RequireFeature>,
             },
             { path: "/settings", element: deferred(<SettingsPage />) },
-            { path: "/test-voice-recording", element: deferred(<TestVoiceRecording />) },
             {
                 path: "/projects",
-                element: deferred(<CanvasPage />),
+                element: <ProjectLibraryRoute />,
             },
             // LibTV 使用单数 `/project` 作为项目库入口；直接渲染本地项目库，
             // 保留原始 URL，避免像素复刻时出现一次重定向造成的布局/加载闪烁。
             {
                 path: "/project",
-                element: deferred(<CanvasPage />),
+                element: <ProjectLibraryRoute />,
             },
             {
                 path: "/projects/:projectId",

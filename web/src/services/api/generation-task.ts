@@ -1,7 +1,7 @@
 import { getMediaBlob } from "@/services/file-storage";
 import { resolveReferenceMediaDuration } from "@/lib/reference-media-metadata";
 import { getImageBlob } from "@/services/image-storage";
-import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
+import { ownedResourceIdFromMediaRef, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { createGenerationTask, waitForGenerationTask, type GenerationTask, type CreateTaskInput } from "@/services/api/task-center";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { grokImagePromptLimitError } from "@/lib/grok-image-prompt-limit";
@@ -14,6 +14,8 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { buildBackendToolRequests, type ResponseFunctionTool, type ResponseInputMessage, type ToolChoice, type ToolResponseResult } from "@/services/api/image";
 import { assertAgentExchangeBudget } from "@/lib/canvas/agent-context-budget";
 import { assertVideoCapability } from "@/services/api/video-validation";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelFor, localComfyModelProblem } from "@/lib/local-comfy-models";
+import { assertLocalComfyReferences, buildLocalComfyGenerationTaskInput } from "@/lib/local-comfy-task-input";
 
 export { logicalModelIDForConfig };
 
@@ -27,6 +29,7 @@ export type BackendGenerationResult = {
     text?: string;
     toolCalls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string }; thoughtSignature?: string }>;
     reasoning?: string;
+    localComfy?: { recipeId: string; jobId: string; promptId?: string; status: string };
 };
 
 type BackendGenerationTaskOptions = {
@@ -186,14 +189,17 @@ export async function runBackendGenerationTaskBatch(options: BackendGenerationTa
     const count = Math.max(1, Math.min(15, Math.floor(Number(options.count)) || 1));
     throwIfAborted(options.signal);
     assertClientPromptLimit(options.mode, options.prompt, options.config, options.metadata);
+    assertBackendRuntimeConfigured(options.config, options.mode);
     if (options.retryContextsByBatchIndex && options.retryContextsByBatchIndex.length !== count) throw new Error("生成重试批次任务数量不匹配");
     const prepared = await prepareGenerationReferences(options);
     throwIfAborted(options.signal);
+    assertPreparedVideoCapability(options.mode, options.config, prepared);
     return Promise.allSettled(
         Array.from({ length: count }, (_, batchIndex) =>
             createAndWaitGenerationTask(
                 {
                     ...options,
+                    ...(isLocalComfyModel(options.config.model) ? localComfyBatchIdentity(options, batchIndex, count, dependencies) : {}),
                     metadata: { ...options.metadata, batchIndex, batchCount: count },
                 },
                 prepared,
@@ -222,6 +228,11 @@ export function isGenerationTaskCancelled(error: unknown, signal?: AbortSignal) 
 }
 
 function assertBackendRuntimeConfigured(config: AiConfig, mode: BackendGenerationMode) {
+    if (isLocalComfyModel(config.model)) {
+        const problem = localComfyModelProblem(config, config.model, mode) || localComfyGenerationProblem(config, config.model);
+        if (problem) throw new Error(problem);
+        return;
+    }
     if (resolveGenerationWorkflowExecution(config, mode)) return;
     if (logicalModelIDForConfig(config)) return;
     const requestConfig = resolveModelRequestConfig(config, config.model);
@@ -233,6 +244,7 @@ function throwIfAborted(signal?: AbortSignal) {
 }
 
 function assertClientPromptLimit(mode: BackendGenerationMode, prompt: string, config: AiConfig, metadata?: Record<string, unknown>) {
+    if (isLocalComfyModel(config.model)) return;
     if (mode !== "image" || metadata?.promptTemplateOperation || (config.taskWorkflowProvider || "model") !== "model") return;
     const requestConfig = resolveModelRequestConfig(config, config.model);
     const promptLimitError = grokImagePromptLimitError(prompt, requestConfig.interfaceType, requestConfig.model);
@@ -247,9 +259,15 @@ async function prepareGenerationReferences({
     referenceAudios = [],
     mask,
 }: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask">): Promise<PreparedGenerationReferences> {
+    const local = isLocalComfyModel(config.model);
+    if (local) {
+        const problem = localComfyModelProblem(config, config.model, mode);
+        if (problem) throw new Error(problem);
+        assertLocalComfyReferences(localComfyModelFor(config, config.model)!, referenceImages, { videoCount: referenceVideos.length, audioCount: referenceAudios.length, mask });
+    }
     // asset:// 仅视频生成可用；Agent Plan Seedream 与 Seedance 共用 /api/plan/v3，不能按 BaseURL 误判。
-    const preferArkAssetUrl = mode === "video" && usesArkVideoAssetReference(config);
-    const preparedImages = await Promise.all(referenceImages.map((image) => prepareBackendImageReference(image, preferArkAssetUrl)));
+    const preferArkAssetUrl = !local && mode === "video" && usesArkVideoAssetReference(config);
+    const preparedImages = await Promise.all(referenceImages.map((image) => prepareBackendImageReference(image, preferArkAssetUrl, local)));
     const preparedVideos = await Promise.all(referenceVideos.map(prepareBackendMediaReference));
     const preparedAudios = await Promise.all(referenceAudios.map(prepareBackendMediaReference));
     const preparedMask = mask ? await prepareBackendImageReference(mask, false) : undefined;
@@ -273,7 +291,7 @@ async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions
 }
 
 async function createBackendGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
-    const task = await dependencies.createTask(backendGenerationTaskInput(options, prepared));
+    const task = await dependencies.createTask(backendGenerationTaskInput(options, prepared, dependencies));
     options.onTaskUpdate?.(task);
     return task;
 }
@@ -281,7 +299,7 @@ async function createBackendGenerationTask(options: BackendGenerationTaskOptions
 export async function prepareBackendGenerationTask(options: BackendGenerationTaskOptions): Promise<CreateTaskInput> {
     throwIfAborted(options.signal);
     assertClientPromptLimit(options.mode, options.prompt, options.config, options.metadata);
-    assertBackendRuntimeConfigured(options.config, options.mode);
+    if (!isLocalComfyModel(options.config.model)) assertBackendRuntimeConfigured(options.config, options.mode);
     const prepared = await prepareGenerationReferences(options);
     throwIfAborted(options.signal);
     assertPreparedVideoCapability(options.mode, options.config, prepared);
@@ -289,6 +307,10 @@ export async function prepareBackendGenerationTask(options: BackendGenerationTas
 }
 
 function assertPreparedVideoCapability(mode: BackendGenerationMode, config: AiConfig, prepared: PreparedGenerationReferences) {
+    if (isLocalComfyModel(config.model)) {
+        assertLocalComfyReferences(localComfyModelFor(config, config.model)!, prepared.referenceImages, { requireOwned: true, videoCount: prepared.referenceVideos.length, audioCount: prepared.referenceAudios.length, mask: prepared.mask });
+        return;
+    }
     if (mode !== "video") return;
     const profile = modelCapabilityConfigFor(config, config.model).video;
     if (!profile) return;
@@ -297,8 +319,14 @@ function assertPreparedVideoCapability(mode: BackendGenerationMode, config: AiCo
     assertVideoCapability(profile, prepared.referenceImages, prepared.referenceVideos, prepared.referenceAudios, config.videoSeconds, { deferResourceMetadataToBackend: true });
 }
 
-function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences): CreateTaskInput {
+function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies = defaultDependencies): CreateTaskInput {
     const { projectId, mode, prompt, config, metadata } = options;
+    if (isLocalComfyModel(config.model)) return buildLocalComfyGenerationTaskInput({
+        projectId, mode, prompt, model: config.model, recipe: localComfyModelFor(config, config.model)!,
+        seed: config.localComfyDefaults?.[mode === "video" ? "video" : "image"]?.seed ?? "0",
+        referenceImages: prepared.referenceImages,
+        clientOperationId: localComfyOperationIdentity(options, dependencies), retryOf: options.retryOf, attemptGroupId: options.attemptGroupId, metadata,
+    });
     const videoOperation = generationOperation(options);
     const workflow = resolveGenerationWorkflowExecution(config, mode);
     const logicalModelId = workflow ? "" : logicalModelIDForConfig(config);
@@ -332,6 +360,17 @@ function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepa
     };
 }
 
+function localComfyOperationIdentity(options: BackendGenerationTaskOptions, dependencies: GenerationTaskDependencies) {
+    return options.clientOperationId ?? (typeof options.metadata?.clientOperationId === "string" ? options.metadata.clientOperationId : dependencies.createId());
+}
+
+function localComfyBatchIdentity(options: BackendGenerationTaskOptions, batchIndex: number, count: number, dependencies: GenerationTaskDependencies) {
+    const retry = options.retryContextsByBatchIndex?.[batchIndex];
+    if (retry) return retry;
+    const supplied = options.clientOperationId ?? (typeof options.metadata?.clientOperationId === "string" ? options.metadata.clientOperationId : undefined);
+    return { clientOperationId: supplied ? `${supplied}${count > 1 ? `:${batchIndex}` : ""}` : dependencies.createId() };
+}
+
 function generationMetadata(config: AiConfig, metadata?: Record<string, unknown>) {
     const channel = resolveModelChannel(config, config.model);
     const model = modelOptionName(config.model);
@@ -362,11 +401,18 @@ async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAud
     }
 }
 
-async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false) {
+async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false, requireOwnedResource = false) {
+    if (requireOwnedResource) {
+        const resourceId = ownedResourceIdFromMediaRef(image.storageKey, image.url || image.dataUrl);
+        if (resourceId) return backendImageReference(image, { storageKey: resourceStorageKey(resourceId) });
+    }
     if (preferArkAssetUrl && image.arkAssetId) return backendImageReference(image, { url: `asset://${image.arkAssetId}` });
     if (resourceIdFromStorageKey(image.storageKey)) return backendImageReference(image, { storageKey: image.storageKey });
     const sourceUrl = image.url || image.dataUrl;
-    if (/^https?:\/\//i.test(sourceUrl)) return backendImageReference(image, { url: sourceUrl });
+    if (/^https?:\/\//i.test(sourceUrl)) {
+        if (requireOwnedResource) throw new Error("本地参考图需先上传并保存为素材资源，不能直接引用外部图片地址");
+        return backendImageReference(image, { url: sourceUrl });
+    }
     const blob = image.storageKey ? await getImageBlob(image.storageKey) : sourceUrl ? await (await fetch(sourceUrl)).blob() : null;
     if (!blob) throw new Error("参考图片尚未保存，请重新上传后再生成");
     try {
@@ -407,6 +453,7 @@ function backendMediaReference<T extends ReferenceVideo | ReferenceAudio>(media:
 }
 
 export function backendProviderConfig(config: AiConfig, mode: BackendGenerationMode = "image") {
+    if (isLocalComfyModel(config.model)) return {};
     const requestConfig = resolveModelRequestConfig(config, config.model);
     const workflow = resolveGenerationWorkflowExecution(config, mode);
     if (workflow) return workflowProviderConfig(config, requestConfig, workflow);
@@ -526,5 +573,12 @@ export function parseBackendGenerationResult(task: GenerationTask): BackendGener
     if (!task.resultJson) throw new Error("后端任务没有返回结果");
     const result = JSON.parse(task.resultJson) as BackendGenerationResult;
     if (!result || typeof result !== "object") throw new Error("后端任务结果格式错误");
+    if (task.provider === "local-comfy") {
+        const media = result.images || (result.video ? [result.video] : []);
+        if (!media.length || media.some((item) => !resourceIdFromStorageKey(item.storageKey))) throw new Error("本地任务结果尚未归档为可读素材资源，请取回原任务结果");
+        // Native consumers share the normal owned Resource result contract.
+        // A sidecar job URL is never a native result or a second upload source.
+        for (const item of media) item.dataUrl = item.url || "";
+    }
     return result;
 }

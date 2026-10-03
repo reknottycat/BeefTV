@@ -64,7 +64,8 @@ import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/componen
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { useCanvasCreateCommands } from "@/components/canvas/use-canvas-create-commands";
 import { AssetPickerModal } from "@/components/canvas/asset-picker-modal";
-import { getProject } from "@/services/api/projects";
+import { getProject, getProjectCore } from "@/services/api/projects";
+import { withProjectGenerationModelDefaults } from "@/lib/project-generation-model-defaults";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasGenerationHistoryPicker } from "@/components/canvas/canvas-generation-history-picker";
 import { CanvasScriptEditor, CanvasScriptNodeContent } from "@/components/canvas/canvas-script-node";
@@ -825,6 +826,12 @@ function InfiniteCanvasPage() {
     );
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
+    const generationProjectId = currentProject?.projectId || "";
+    const generationProjectQuery = useQuery({ queryKey: ["project-core", generationProjectId], queryFn: () => getProjectCore(generationProjectId), enabled: Boolean(generationProjectId) });
+    const projectGenerationConfig = useMemo(() => withProjectGenerationModelDefaults(effectiveConfig, generationProjectQuery.data?.project), [effectiveConfig, generationProjectQuery.data?.project]);
+    const projectGenerationConfigProblem = generationProjectId && !generationProjectQuery.data
+        ? generationProjectQuery.isError ? "项目默认模型读取失败，请刷新后重试" : "正在读取项目默认模型，请稍候"
+        : "";
     const refetchLinkedProject = linkedProjectQuery.refetch;
     const archiveNodesToLinkedFolder = useCallback(
         (folder: CanvasNodeData, droppedNodes: CanvasNodeData[]) => {
@@ -2296,6 +2303,8 @@ function InfiniteCanvasPage() {
     const handleGenerateNode = useCanvasGenerationExecutor({
         projectId,
         domainProjectId: currentProject?.projectId,
+        generationConfig: projectGenerationConfig,
+        generationConfigProblem: projectGenerationConfigProblem,
         addedSkills,
         assets,
         nodesRef,
@@ -2483,6 +2492,8 @@ function InfiniteCanvasPage() {
             ) : (
                 <CanvasNodePromptPanel
                     projectId={projectId}
+                    generationConfig={projectGenerationConfig}
+                    generationConfigProblem={projectGenerationConfigProblem}
                     node={panelNode}
                     isRunning={isCanvasNodeGenerating(panelNode, runningNodeId)}
                     mentionReferences={[

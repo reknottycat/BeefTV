@@ -256,6 +256,30 @@ func publicTaskInputJSON(raw string) string {
 		return ""
 	}
 	public := map[string]any{}
+	if selection, ok := input["localComfy"].(map[string]any); ok {
+		local := map[string]any{}
+		for _, key := range []string{"recipeId", "seed", "_retryJobId", "_retryKey"} {
+			if value, exists := selection[key]; exists {
+				local[key] = value
+			}
+		}
+		public["localComfy"] = local
+		images := make([]map[string]any, 0)
+		if references, ok := input["referenceImages"].([]any); ok {
+			for _, reference := range references {
+				if item, ok := reference.(map[string]any); ok {
+					identity := map[string]any{}
+					for _, key := range []string{"id", "storageKey"} {
+						if value, exists := item[key]; exists {
+							identity[key] = value
+						}
+					}
+					images = append(images, identity)
+				}
+			}
+		}
+		public["referenceImages"] = images
+	}
 	// Only expose the parameters needed for result comparison and paid retry
 	// confirmation. Never expose credentials, headers, media URLs or bytes.
 	if input["mode"] == "video" {

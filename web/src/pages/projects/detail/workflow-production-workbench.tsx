@@ -36,7 +36,9 @@ import {
 } from "@/services/api/projects";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { skillRuntime } from "@/services/skill-runtime";
-import { configuredModelMatchesCapability, modelDisplayName, modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { modelDisplayName, modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelProblem, localComfyModelSummary } from "@/lib/local-comfy-models";
+import { projectGenerationModel } from "@/lib/project-generation-model-defaults";
 import { SkillRuntimePicker, useSkillRuntimeCatalog } from "@/components/skills/skill-runtime-picker";
 
 import {
@@ -110,9 +112,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const previewArtifact = artifacts.find((item) => item.id === previewArtifactId) || newestArtifact;
     const generationCapability = activeStage === "video" ? "video" as const : "image" as const;
     const modelOptions = useMemo(() => selectableModelsByCapability(effectiveConfig, generationCapability), [effectiveConfig, generationCapability]);
-    const projectDefaultModel = generationCapability === "video" ? detail.project.defaultVideoModel : detail.project.defaultImageModel;
-    const globalDefaultModel = generationCapability === "video" ? effectiveConfig.videoModel : effectiveConfig.imageModel;
-    const defaultModel = projectDefaultModel && configuredModelMatchesCapability(effectiveConfig, projectDefaultModel, generationCapability) ? projectDefaultModel : globalDefaultModel;
+    const defaultModel = projectGenerationModel(effectiveConfig, detail.project, generationCapability);
     const initialModel = defaultModel || modelOptions[0] || "";
     const [selectedModel, setSelectedModel] = useState(initialModel);
     const selectedModelRef = useRef(initialModel);
@@ -143,35 +143,41 @@ export default function WorkflowProductionWorkbench(props: Props) {
             ? { size: aspectRatio, vquality: resolution, videoSeconds: Number(generationSeconds) }
             : { size: aspectRatio, quality: imageQuality },
     }), [aspectRatio, generationCapability, generationReferenceAudios.length, generationSeconds, imageQuality, resolution, shotAssetReferenceContext.referenceImages.length, videoEditOperation]);
-    const routedModel = resolveCompatibleModel(effectiveConfig, selectedModel, modelRequirements) || selectedModel;
+    const routedModel = isLocalComfyModel(selectedModel) ? selectedModel : resolveCompatibleModel(effectiveConfig, selectedModel, modelRequirements) || selectedModel;
+    const localModel = isLocalComfyModel(routedModel);
     const activeProfile = useMemo(() => modelCapabilityConfigFor(effectiveConfig, routedModel), [effectiveConfig, routedModel]);
     const videoProfile = generationCapability === "video" ? activeProfile.video : undefined;
     const imageProfile = generationCapability === "image" ? activeProfile.image : undefined;
-    const videoBooleanOptions = useMemo(() => generationCapability === "video"
+    const videoBooleanOptions = useMemo(() => generationCapability === "video" && !localModel
         ? resolveModelVideoBooleanOptions(effectiveConfig, routedModel, {}, {
               videoGenerateAudio: effectiveConfig.videoGenerateAudio,
               videoWatermark: effectiveConfig.videoWatermark,
           })
-        : undefined, [effectiveConfig, generationCapability, routedModel]);
+        : undefined, [effectiveConfig, generationCapability, routedModel, localModel]);
     const generationConfig = useMemo(() => ({
         ...effectiveConfig,
         model: routedModel,
         imageModel: generationCapability === "image" ? routedModel : effectiveConfig.imageModel,
         videoModel: generationCapability === "video" ? routedModel : effectiveConfig.videoModel,
-        size: aspectRatio,
-        quality: imageQuality,
-        vquality: resolution,
-        videoSeconds: generationSeconds,
-        ...(videoBooleanOptions || {}),
-    }), [aspectRatio, effectiveConfig, generationCapability, generationSeconds, imageQuality, resolution, routedModel, videoBooleanOptions]);
+        ...(!localModel ? {
+            size: aspectRatio,
+            quality: imageQuality,
+            vquality: resolution,
+            videoSeconds: generationSeconds,
+            ...(videoBooleanOptions || {}),
+        } : {}),
+    }), [aspectRatio, effectiveConfig, generationCapability, generationSeconds, imageQuality, resolution, routedModel, videoBooleanOptions, localModel]);
     const modelSummary = routedModel ? modelDisplayName(effectiveConfig, routedModel) : "未选择模型";
+    const generationSubmissionProblem = localModel
+        ? localComfyModelProblem(generationConfig, routedModel, generationCapability) || localComfyGenerationProblem(generationConfig, routedModel) || modelCompatibilityError(generationConfig, routedModel, modelRequirements)
+        : !isAiConfigReady(generationConfig, routedModel) ? "模型连接未配置，请在设置中填写连接信息" : "";
     const durationSummary = `${Number(watchedDuration || Math.max(0.5, (selectedShot?.durationMs || 3000) / 1000))}s`;
     const resolutionSummary = generationCapability === "video" ? formatVideoResolutionLabel(resolution) : imageQuality.toUpperCase();
 
     useEffect(() => {
         selectedModelRef.current = initialModel;
         setSelectedModel(initialModel);
-        if (!initialModel) return;
+        if (!initialModel || isLocalComfyModel(initialModel)) return;
         const profile = modelCapabilityConfigFor(effectiveConfig, initialModel);
         if (generationCapability === "video" && profile.video) {
             const normalized = normalizeVideoValue(profile.video, {
@@ -218,6 +224,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const changeGenerationModel = (nextModel: string) => {
         selectedModelRef.current = nextModel;
         setSelectedModel(nextModel);
+        if (isLocalComfyModel(nextModel)) return;
         const profile = modelCapabilityConfigFor(effectiveConfig, nextModel);
         if (generationCapability === "video" && profile.video) {
             const normalized = normalizeVideoValue(profile.video, {
@@ -278,6 +285,10 @@ export default function WorkflowProductionWorkbench(props: Props) {
 
     const generateArtifact = async () => {
         if (!selectedShot || submittingShotIds.has(selectedShot.id)) return;
+        if (generationSubmissionProblem) {
+            message.warning(generationSubmissionProblem);
+            return;
+        }
         const submittingShot = selectedShot;
         setSubmittingShotIds((current) => new Set(current).add(submittingShot.id));
         try {
@@ -303,7 +314,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                 revision: revisionInput(values),
             });
             const mode = generationCapability;
-            const config = { ...generationConfig, videoSeconds: String(Math.max(1, Math.round(values.durationSeconds))) };
+            const config = localModel ? generationConfig : { ...generationConfig, videoSeconds: String(Math.max(1, Math.round(values.durationSeconds))) };
             if (!isAiConfigReady(config, routedModel)) throw new Error("当前模型渠道配置不完整，请先到设置中补齐");
             const basePrompt = mode === "video"
                 ? [values.videoPrompt || values.plotDescription, values.action, values.dialogue && `台词：${values.dialogue}`, values.continuityNotes].filter(Boolean).join("\n")
@@ -334,7 +345,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                     source: "short-drama-workflow",
                     ...(mode === "video" && shotAssetReferenceContext.referenceImages.length ? { videoEditOperation: "reference_to_video" } : {}),
                     resolvedCharacterVersions: shotAssetReferenceContext.resolvedCharacterVersions,
-                    artifactMetadata: { model: routedModel, aspectRatio, resolution, durationSeconds: values.durationSeconds, ...skillExecution.metadata },
+                    artifactMetadata: { model: routedModel, aspectRatio: localModel ? imageProfile?.size.default || videoProfile?.defaultRatio : aspectRatio, resolution: localModel ? videoProfile?.defaultResolution || imageProfile?.size.default : resolution, durationSeconds: localModel && generationCapability === "video" ? videoProfile?.duration.default : values.durationSeconds, ...skillExecution.metadata },
                 },
             });
             if (activeShotIdRef.current === submittingShot.id) setEditorDirty(false);
@@ -448,7 +459,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                                 icon={<SlidersHorizontal />}
                                 title="生成设置"
                                 description="生成规格与镜头语言"
-                                summary={<><span>{durationSummary}</span><span>{aspectRatio}</span><span>{resolutionSummary}</span><span className="is-model">{modelSummary}</span></>}
+                                summary={<>{localModel ? <span>{localComfyModelSummary(routedModel)}</span> : <><span>{durationSummary}</span><span>{aspectRatio}</span><span>{resolutionSummary}</span></>}<span className="is-model">{modelSummary}</span></>}
                             >
                                 <div className="workflow-settings-section">
                                     <div className="workflow-settings-section-title">生成规格</div>
@@ -465,8 +476,10 @@ export default function WorkflowProductionWorkbench(props: Props) {
 
                                         />
                                     </Form.Item>
+                                    {localModel ? <p className="text-[var(--fs-label)] text-foreground/60">{localComfyModelSummary(routedModel)}</p> : null}
+                                    {generationSubmissionProblem ? <p role="status" className="text-[var(--fs-label)] text-foreground/60">{generationSubmissionProblem}</p> : null}
                                     <Form.Item label="技能库"><SkillRuntimePicker profile="shortDrama" skills={availableSkills} loading={skillsLoading} value={selectedSkillIds} onChange={setSelectedSkillIds} /></Form.Item>
-                                    <div className="workflow-form-grid is-three">
+                                    {!localModel ? <><div className="workflow-form-grid is-three">
                                         <Form.Item name="durationSeconds" label="镜头时长（秒）">
                                             {generationCapability === "video" && videoProfile?.duration.selection === "enum"
                                                 ? <Select options={videoDurationOptions(videoProfile).map((value) => ({ value, label: `${value} 秒` }))} />
@@ -479,7 +492,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                                             <Form.Item label="生成画质"><Select value={imageQuality} onChange={setImageQuality} options={imageProfile.quality.values.map((value) => ({ value, label: value.toUpperCase() }))} /></Form.Item>
                                         ) : <div />}
                                     </div>
-                                    {generationCapability === "image" && imageProfile ? <ImageSizePicker profile={imageProfile} size={aspectRatio} quality={imageQuality} onChange={(size, quality) => { setAspectRatio(size); if (quality) setImageQuality(quality); }} /> : null}
+                                    {generationCapability === "image" && imageProfile ? <ImageSizePicker profile={imageProfile} size={aspectRatio} quality={imageQuality} onChange={(size, quality) => { setAspectRatio(size); if (quality) setImageQuality(quality); }} /> : null}</> : <Form.Item name="durationSeconds" hidden><InputNumber /></Form.Item>}
                                 </div>
                                 <div className="workflow-settings-section">
                                     <div className="workflow-settings-section-title">镜头语言</div>
@@ -506,7 +519,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                             </WorkflowDisclosure>
                         </div>
                         <footer className="workflow-editor-actions">
-                            <div className="flex items-center gap-2"><Button danger icon={<Trash2 className="size-4" />} loading={deleteShot.isPending} disabled={saveShot.isPending || selectedShotSubmitting || changeAssetBinding.isPending} onClick={requestDeleteShot}>删除镜头</Button><Button htmlType="submit" icon={<Save className="size-4" />} loading={saveShot.isPending} disabled={!editorDirty || deleteShot.isPending}>保存脚本</Button><Button type="primary" icon={<Play className="size-4" />} loading={selectedShotSubmitting || shotTask?.status === "queued" || shotTask?.status === "running"} disabled={deleteShot.isPending} onClick={() => void generateArtifact()}>{selectedShotSubmitting ? `${stageCopy.action}（正在提交）` : shotTask?.status === "queued" || shotTask?.status === "running" ? `${stageCopy.action}（已运行${shotTaskElapsed}）` : shotTask?.status === "failed" ? `${stageCopy.action}（上次失败，可重试）` : shotTask?.status === "succeeded" && !newestArtifact ? `${stageCopy.action}（已完成，正在同步）` : newestArtifact ? `${stageCopy.action}（已生成）` : stageCopy.action}</Button></div>
+                            <div className="flex items-center gap-2"><Button danger icon={<Trash2 className="size-4" />} loading={deleteShot.isPending} disabled={saveShot.isPending || selectedShotSubmitting || changeAssetBinding.isPending} onClick={requestDeleteShot}>删除镜头</Button><Button htmlType="submit" icon={<Save className="size-4" />} loading={saveShot.isPending} disabled={!editorDirty || deleteShot.isPending}>保存脚本</Button><Button type="primary" icon={<Play className="size-4" />} loading={selectedShotSubmitting || shotTask?.status === "queued" || shotTask?.status === "running"} disabled={deleteShot.isPending || Boolean(generationSubmissionProblem)} title={generationSubmissionProblem || undefined} onClick={() => void generateArtifact()}>{selectedShotSubmitting ? `${stageCopy.action}（正在提交）` : shotTask?.status === "queued" || shotTask?.status === "running" ? `${stageCopy.action}（已运行${shotTaskElapsed}）` : shotTask?.status === "failed" ? `${stageCopy.action}（上次失败，可重试）` : shotTask?.status === "succeeded" && !newestArtifact ? `${stageCopy.action}（已完成，正在同步）` : newestArtifact ? `${stageCopy.action}（已生成）` : stageCopy.action}</Button></div>
                         </footer>
                     </Form>
                 </section>
@@ -529,7 +542,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                     <div className="workflow-preview-scroll thin-scrollbar">
                         {previewTab === "latest" ? <LatestPreview artifact={previewArtifact} emptyText={stageCopy.empty} onPreviewImage={setImagePreviewArtifact} /> : <ArtifactHistory artifacts={artifacts} activeId={previewArtifact?.id} onSelect={(artifact) => { setPreviewArtifactId(artifact.id); setPreviewTab("latest"); }} />}
                         <div className="workflow-preview-summary"><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">当前产物</span><ArtifactStatus artifact={newestArtifact} compact /></div><div className="mt-1 text-[var(--fs-micro)] text-foreground/45">{newestArtifact ? `${formatDuration(selectedShot.durationMs)} · ${resolution}p · v${newestArtifact.version}` : "当前镜头还没有生成产物"}</div></div>
-                        <div className="workflow-preview-actions"><Button icon={<RefreshCcw className="size-3.5" />} loading={selectedShotSubmitting || shotTask?.status === "queued" || shotTask?.status === "running"} onClick={() => void generateArtifact()}>重新生成</Button><Button icon={<Download className="size-3.5" />} disabled={!previewArtifact?.resourceId} onClick={() => previewArtifact?.resourceId && void downloadArtifact(previewArtifact, selectedShot.title, message.error)}>下载{activeStage === "video" ? "视频" : "图片"}</Button></div>
+                        <div className="workflow-preview-actions"><Button icon={<RefreshCcw className="size-3.5" />} loading={selectedShotSubmitting || shotTask?.status === "queued" || shotTask?.status === "running"} disabled={Boolean(generationSubmissionProblem)} title={generationSubmissionProblem || undefined} onClick={() => void generateArtifact()}>重新生成</Button><Button icon={<Download className="size-3.5" />} disabled={!previewArtifact?.resourceId} onClick={() => previewArtifact?.resourceId && void downloadArtifact(previewArtifact, selectedShot.title, message.error)}>下载{activeStage === "video" ? "视频" : "图片"}</Button></div>
                         <ArtifactHistory artifacts={artifacts.slice(0, 4)} activeId={previewArtifact?.id} onSelect={(artifact) => setPreviewArtifactId(artifact.id)} compact />
                     </div>
                 </aside>

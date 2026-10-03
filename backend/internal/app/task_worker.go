@@ -324,6 +324,10 @@ func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) t
 
 func (s *Service) shouldDeferVideoProviderTask(task model.Task, decryptedInput string, err error) bool {
 	providerRequestID := strings.TrimSpace(task.ProviderRequestID)
+	if taskInputIsLocalComfy(decryptedInput) && providerRequestID != "" {
+		var pending localComfyPendingError
+		return errors.As(err, &pending) && pending.jobID == providerRequestID && (task.StartedAt == nil || time.Since(*task.StartedAt) < 24*time.Hour)
+	}
 	if providerRequestID == "" || (!strings.HasPrefix(task.Type, "canvas_video") && !strings.HasPrefix(task.Type, "video_")) {
 		return false
 	}

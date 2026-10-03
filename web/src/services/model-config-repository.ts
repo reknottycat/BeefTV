@@ -85,7 +85,9 @@ export function createModelConfigRepository(dependencies: ModelConfigRepositoryD
     };
 
     const commit = (config: AiConfig) => {
-        latestConfig = config;
+        latestConfig = { ...config };
+        delete latestConfig.localComfyModels;
+        delete latestConfig.localComfyGenerationEnabled;
         generation += 1;
         publish({ dirty: true });
         return scheduleDrain();
