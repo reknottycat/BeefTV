@@ -1,4 +1,4 @@
-FROM python:3.13-alpine
+FROM python:3.13-alpine@sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059
 ARG BUILD_COMMIT=unknown
 ARG SOURCE_REPOSITORY=https://github.com/glanderness/BeefTV
 LABEL org.opencontainers.image.source=${SOURCE_REPOSITORY} \

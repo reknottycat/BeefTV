@@ -16,7 +16,7 @@
 
 ## 前提与首次部署
 
-要求 ARM64 Docker/Compose，精确基础镜像：`alpine:3.22`、`golang:1.25-alpine`、`oven/bun:1.3.13`、`nginx:1.27-alpine`、`python:3.13-alpine`。构建还安装 Alpine 的 `build-base`、`nodejs`、`zip`、`ca-certificates`、`tzdata`、`wget`；Python 适配没有 pip 依赖。Bun 仅 `--frozen-lockfile --ignore-scripts`，Go 使用现有 `go.mod`/`go.sum`。如依赖不可达或 ARM64 manifest 缺失，报告具体项，不盲改版本或扩大权限。
+要求 ARM64 Docker/Compose。三个 Dockerfile 对 `alpine:3.22`、`golang:1.25-alpine`、`oven/bun:1.3.13`、`nginx:1.27-alpine`、`python:3.13-alpine` 和 BuildKit 前端 `docker/dockerfile:1.7` 使用经过 ARM64 拉取核验的 digest；更新时显式复核新 digest，不仅更换 tag。构建还安装 Alpine 的 `build-base`、`nodejs`、`zip`、`ca-certificates`、`tzdata`、`wget`（各自来自该基础镜像的 Alpine 分支，APK 版本尚不单独锁定）；Python 适配没有 pip 依赖。Bun 仅 `--frozen-lockfile --ignore-scripts`，Go 使用现有 `go.mod`/`go.sum` 并设 `GOTOOLCHAIN=local` 保持已固定 SDK。如模块要求更高 Go、依赖不可达或 ARM64 缺失，报告具体项，不盲改版本或扩大权限。
 
 前端使用上游 slim 构建，不带可选浏览器大模型、3D 素材或 FFmpeg 模型资源。原剧本、画布、资产、渠道功能沿用上游；依赖可选重型资源的功能应另行验证。完整 `bun run build:slim` 同时做 TypeScript 检查，不跳过编译错误。
 
