@@ -4,6 +4,8 @@
 
 正常响应解包 {code:0,data,msg,reason}；非零 code 和 HTTP 错误均返回失败。CLI 输出 {ok:true,data:...} 或 {ok:false,reason,message,...}，失败退出码 1。HTTP 重定向不跟随，避免误转发上传数据。
 
+CLI 的 JSON 标准输出用 ASCII 安全转义；解析后的中文名称和路径保持原文，避免 Windows 严格控制台编码在文件已落地后使打印失败。HTTP JSON 和本地 UTF-8 账本内容不受此输出编码策略影响。
+
 客户端直连配置的服务，不使用系统/环境代理。任何生成 POST 或原生写请求的 HTTP 5xx 都按结果不明处理，不能据此换键重投。下载有 256 MiB 硬上限，先按资产元数据 size 与 sha256 验证完整字节，再创建目标文件；不完整、过大或哈希不符均不留下目标文件。
 
 ## 原生 BeefTV

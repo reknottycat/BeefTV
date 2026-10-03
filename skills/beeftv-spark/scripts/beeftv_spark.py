@@ -490,7 +490,7 @@ def main(argv=None):
                         **optional(data=exc.data, status=exc.status)}, 1
     except (OSError, ValueError, KeyError, TypeError):
         output, code = {"ok": False, "reason": "invalid_local_input", "message": "Check local files, config and API response fields."}, 1
-    print(json.dumps(output, ensure_ascii=False))
+    print(json.dumps(output, ensure_ascii=True))
     return code
 
 

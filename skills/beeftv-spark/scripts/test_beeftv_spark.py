@@ -6,9 +6,12 @@ import io
 import hashlib
 import importlib.util
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -427,6 +430,20 @@ class ClientContractTests(unittest.TestCase):
                 exit_code = cli.main(["projects"])
         self.assertEqual(exit_code, 1)
         self.assertEqual(json.loads(output.getvalue())["reason"], "missing_base_url")
+
+    def test_ascii_strict_subprocess_download_to_unicode_path(self):
+        self.state.assets["asset-a"] = {"id": "asset-a", "name": "参考图", "mime_type": "image/png",
+                                      "size": len(IMAGE), "sha256": hashlib.sha256(IMAGE).hexdigest()}
+        destination = self.root / "中文素材" / "参考图.png"
+        environment = {**os.environ, "PYTHONIOENCODING": "ascii:strict", "PYTHONUTF8": "0"}
+        result = subprocess.run([sys.executable, str(Path(cli.__file__).resolve()), "--base-url", self.url,
+                                 "asset-download", "--asset", "asset-a", "--output", str(destination)],
+                                env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("ascii", errors="replace"))
+        output = json.loads(result.stdout.decode("ascii"))
+        self.assertTrue(output["ok"])
+        self.assertEqual(output["data"]["path"], str(destination))
+        self.assertEqual(destination.read_bytes(), IMAGE)
 
     def test_credential_url_rejected_before_network(self):
         for url in ("http://person:secret@example.invalid", self.url + "?token=hidden", self.url + "/unsupported"):
