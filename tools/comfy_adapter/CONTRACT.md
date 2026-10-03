@@ -67,6 +67,8 @@ I2V 首帧配方可增加 `reference_constraints:[{"role":"first_frame","width":
 | GET `/config` | `{generation_enabled,storage_scope:"sidecar",concurrency:1,max_reference_bytes,recipe_count}`；不返回私有 URL、模型或路径 |
 | GET `/health` | `{adapter:"ok",comfy_reachable,queue_running,queue_pending,generation_enabled}`；只读 `/queue`，不可达时 counts 为 null |
 | GET `/recipes` | `Recipe[]` |
+| GET `/model-catalog?source=&page=&page_size=&search=&capability=&task=` | 只读缓存目录；`source` 仅 `comfy.recipes` / `rh.standard` / `rh.llm`，page 从 1 开始、page_size 1..200，默认 40；搜索最长 200 字符。查询空缓存或过期缓存不会隐式读取上游 |
+| POST `/model-catalog/refresh` | `{source}`，仅显式刷新所选目录；复用同 origin、JSON 写路径校验，重复刷新同来源返回 409 `catalog_refresh_busy`。不提交生成、不检查账户、不接受 URL/headers/key |
 | GET `/projects` | `Project[]` |
 | POST `/projects` | `{name,upstream_project_id?,canvas_project_id?}` → `Project`；canvas ID 为最长 200 字符的字符串，省略或空字符串表示未关联 |
 | GET `/projects/{id}` | `Project` |
@@ -87,6 +89,23 @@ I2V 首帧配方可增加 `reference_constraints:[{"role":"first_frame","width":
 | POST `/jobs/{id}/retry` | `{request_key,prompt?,seed?}` → 新 attempt `Job`；仅 failed/completed 允许，completed 对应显式单镜重做 |
 
 没有取消接口，避免操作共享 Comfy 队列而中断其他任务。停止 UI／CLI 刷新不会取消 Comfy 作业。返回 `Job.status=failed/submission_unknown` 的提交请求仍为 HTTP 200：它表达已持久保存的真实作业结果；调用方必须检查状态，不能将 HTTP 200 当作生成成功。
+
+### 只读目录与来源
+
+目录返回 `{source,sourceKind,sourceUrl,sourceVersion,fetchedAt,cacheStatus,lastError,items,total,page,pageSize,hasMore,readOnly:true,catalogOnly:true,generationEnabled:false}`。缓存只在进程内保留，重启后为空；成功缓存 600 秒后为 `stale`，刷新失败保留旧列表与原成功时间。`lastError` 仅 `read_failed` / `invalid_snapshot`，不返回上游响应、URL 参数、异常或私有路径。缓存状态和账户可用性是不同维度。
+
+- `rh.standard` 固定公开 GET `https://raw.githubusercontent.com/HM-RunningHub/OpenClaw_RH_Skills/main/runninghub/data/capabilities.json`，属于官方能力目录快照，使用其中的 `version`。它不是账户实时授权目录。保留官方 `task` 和 `output_type`；`string` 输出可能是音乐、语音、视频地址或操作结果，不能当作文本聊天模型。
+- `rh.llm` 固定公开 GET `https://llm.runninghub.ai/v1/models`，属于公开文本模型目录，版本为内容 SHA-256；官方 pricing/capabilities 元数据保留并标明账户报价与真实识别未验证。实际 LLM 调用需要用户另外配置合适的 Enterprise-Shared Key，此目录读取不需要也不读取 key。
+- 两个公共读取器均仅固定 HTTPS GET，响应上限 5 MiB、15 秒超时、禁止重定向，不带认证或 Cookie，不读取环境变量、代理凭据或用户渠道。客户端不能指定新目的地址。
+- `comfy.recipes` 仅描述已登记的 API 配方，显式刷新只用既有固定 ComfyClient GET `/object_info/{registered_class}`。最多 128 个登记节点类，聚合响应不超过 5 MiB，25 秒预算检查；单个正在读取的请求仍受既有 ComfyClient 超时约束。配方 SHA、工作流 SHA、节点/必填参数/连接和模型枚举校验结果可见；私有工作流、prompt、文件路径、模型文件名及参数值不进入目录 DTO。目录和刷新锁独立于任务/SQLite 锁，缓存查询仍可读取上一次结果。
+
+条目 ID 根据 source + 原始 modelId 稳定生成。标准端点、LLM 模型、登记配方的 entryType 分别为 `standard_endpoint`、`llm_directory_model`、`registered_recipe`；条目均保留 `ready:false`、`gpuVerified:false`、`generationEnabled:false`、`billingAuthorized:false`、账户 `callable:false`，只表示目录证据。`staticChecks` 通过不是 GPU 运行成功，也不启用生成开关。当前图片参考约束为 PNG、同宽高比且尺寸不小于配方目标；视频/音频参考不支持。目录不会扫描全部 checkpoint 自动登记，也不会保存或修改任务数据库 schema。
+
+固定、非绑定参数还校验 INT/FLOAT/BOOLEAN/STRING 类型以及数值 schema 的 min/max；bool 不当作整数或浮点，浮点必须有限，越界为 `parameter_out_of_range`，类型错误为 `parameter_type_mismatch`。未知 literal 类型、无效范围或不完整 schema 为检查 `unavailable`，不能标记静态通过。prompt、seed、参考文件和输出前缀的运行时绑定占位不据其旧值误判；连接类型由节点输出 schema 另行校验。
+
+Web 设置使用现有 Ant 与主题 token，来源、输出筛选、搜索、页码存 URL；搜索支持 IME、300ms 防抖和请求取消。条目说明输入要求、缓存时间、原始输出类型与证据，缓存标签描述上次查询时的状态，不在页面停留时假称仍然有效。此页未将目录接入原生项目默认模型或统一生成调度。AI 应用社区列表、个人工作流手工 ID 导入及 Comfy 权重资源库是另外的目录，不冒充“我的全部模型/工作流”。
+
+离线验证：`python -m unittest discover -s tools/comfy_adapter -p 'test_*catalog*.py' -v`。运行时 HTTP 测试只使用临时 loopback 服务与模拟公开响应，不发 GPU 或真实付费作业。
 
 ### DTO
 

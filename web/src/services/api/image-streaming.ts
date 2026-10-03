@@ -1,6 +1,7 @@
 import { channelRequest } from "@/services/api/custom-channel-relay";
+import { normalizeChannelFailure } from "@/services/api/channel-transport";
 import type { ChatCompletionPayload, ChatCompletionStreamState, GeminiPayload, GeminiStreamState, RequestOptions, ResponseApiPayload, ResponseStreamState, ToolResponseResult } from "@/services/api/image-contracts";
-import type { AiConfig } from "@/stores/use-config-store";
+import type { AiConfig, ModelChannel } from "@/stores/use-config-store";
 import {
     consumeChatCompletionStreamText,
     consumeGeminiStreamText,
@@ -14,7 +15,32 @@ import {
 } from "@/services/api/image-response";
 import { aiApiUrl, aiHeaders, geminiApiUrl, geminiHeaders } from "@/services/api/image-transport";
 
-export async function requestStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+async function channelStreamResult(config: AiConfig, run: () => Promise<ToolResponseResult>) {
+    try {
+        return await run();
+    } catch (error) {
+        const connection = config as AiConfig & Pick<ModelChannel, "headers" | "secretKey">;
+        return normalizeChannelFailure(error, [config.apiKey, connection.secretKey || "", ...(connection.headers || []).map((header) => header.value)]);
+    }
+}
+
+export function requestStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    return channelStreamResult(config, () => streamingResponse(config, body, onDelta, options));
+}
+
+export function requestStreamingChatCompletion(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    return channelStreamResult(config, () => streamingChatCompletion(config, body, onDelta, options));
+}
+
+export function requestStreamingClaude(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    return channelStreamResult(config, () => streamingClaude(config, body, onDelta, options));
+}
+
+export function requestGeminiStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    return channelStreamResult(config, () => streamingGeminiResponse(config, body, onDelta, options));
+}
+
+async function streamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
     const request = channelRequest(config, aiApiUrl(config, "/responses"), { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" });
     const response = await fetch(request.url, {
         method: "POST",
@@ -47,7 +73,7 @@ export async function requestStreamingResponse(config: AiConfig, body: Record<st
     return { ...result, content: state.text || result.content, ...(state.reasoning ? { reasoning: state.reasoning } : {}) };
 }
 
-export async function requestStreamingChatCompletion(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+async function streamingChatCompletion(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
     const request = channelRequest(config, aiApiUrl(config, "/chat/completions"), { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" });
     const response = await fetch(request.url, {
         method: "POST",
@@ -82,7 +108,7 @@ export async function requestStreamingChatCompletion(config: AiConfig, body: Rec
     return { content: state.text, toolCalls, ...(state.reasoning ? { reasoning: state.reasoning } : {}) };
 }
 
-export async function requestStreamingClaude(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+async function streamingClaude(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
     const request = channelRequest(config, aiApiUrl(config, "/messages"), { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" });
     const response = await fetch(request.url, {
         method: "POST",
@@ -148,7 +174,7 @@ function parseClaudeResult(payload: Record<string, unknown>): ToolResponseResult
     return { content: text, toolCalls };
 }
 
-export async function requestGeminiStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+async function streamingGeminiResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
     const request = channelRequest(config, `${geminiApiUrl(config, "streamGenerateContent")}?alt=sse`, geminiHeaders(config));
     const response = await fetch(request.url, {
         method: "POST",

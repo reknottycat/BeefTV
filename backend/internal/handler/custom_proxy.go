@@ -97,6 +97,39 @@ func proxyCustomRelayRequestWithService(c *gin.Context, policy app.RuntimeReques
 		failService(c, err)
 		return
 	}
+	connection, err := app.NormalizeChannelConnection(app.ChannelConnection{
+		AuthMode: c.GetHeader(app.CustomRelayAuthModeHeader), AuthHeader: c.GetHeader(app.CustomRelayAuthHeaderHeader), APIPathPrefix: c.GetHeader(app.CustomRelayAPIPathPrefixHeader),
+	}, headers)
+	if err != nil {
+		failService(c, err)
+		return
+	}
+	customConnection := connection.AuthMode != "bearer" || connection.AuthHeader != "" || connection.APIPathPrefix != ""
+	if customConnection && apiFormat != "openai" {
+		fail(c, http.StatusBadRequest, errors.New("Custom connection options require a standard OpenAI interface"))
+		return
+	}
+	if customConnection {
+		// Validate even an auth-only override against the standard suffix set.
+		if _, err := app.ApplyChannelPathPrefix(target.String(), "/"); err != nil {
+			failService(c, err)
+			return
+		}
+	}
+	resolvedURL, err := app.ApplyChannelPathPrefix(target.String(), connection.APIPathPrefix)
+	if err != nil {
+		failService(c, err)
+		return
+	}
+	target, err = app.ValidateCustomRelayURL(resolvedURL)
+	if err != nil {
+		failService(c, err)
+		return
+	}
+	if err := authorizeCustomRelay(c.Request.Method, target, apiFormat, c.GetHeader("Content-Type")); err != nil {
+		fail(c, http.StatusForbidden, err)
+		return
+	}
 	requestLimit := policy.CustomRelayRequestMB << 20
 	if c.Request.ContentLength > requestLimit {
 		fail(c, http.StatusRequestEntityTooLarge, errors.New("自定义渠道请求超过配置上限"))
@@ -138,7 +171,7 @@ func proxyCustomRelayRequestWithService(c *gin.Context, policy app.RuntimeReques
 		upstreamReq.Header.Set("x-api-key", apiKey)
 		upstreamReq.Header.Set("anthropic-version", "2023-06-01")
 	} else {
-		upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
+		app.ApplyChannelAuth(upstreamReq, connection, apiKey)
 	}
 
 	resp, err := customRelayClient(time.Duration(policy.CustomRelayTimeoutMinutes) * time.Minute).Do(upstreamReq)

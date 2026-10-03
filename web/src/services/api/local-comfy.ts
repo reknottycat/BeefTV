@@ -1,6 +1,7 @@
 import { ApiError, apiBaseURL, http } from "@/services/api/request";
 import type { Asset } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
+import type { ModelCatalogPage, ModelCatalogQuery, ModelCatalogSource } from "@/lib/model-catalog-types";
 
 const BASE = "/local-comfy/v1";
 const TIMEOUT = 15_000;
@@ -18,6 +19,8 @@ export type LocalComfyJobInput = { project_id: string; shot_id: string; recipe_i
 const options = (signal?: AbortSignal) => ({ signal, timeout: TIMEOUT });
 export const getLocalComfyConfig = (signal?: AbortSignal) => http.get<LocalComfyConfig>(`${BASE}/config`, options(signal));
 export const listLocalComfyRecipes = (signal?: AbortSignal) => http.get<LocalComfyRecipe[]>(`${BASE}/recipes`, options(signal));
+export const listLocalModelCatalog = (query: ModelCatalogQuery, signal?: AbortSignal) => http.get<ModelCatalogPage>(`${BASE}/model-catalog`, { ...options(signal), params: query });
+export const refreshLocalModelCatalog = (source: ModelCatalogSource, signal?: AbortSignal) => http.post<ModelCatalogPage>(`${BASE}/model-catalog/refresh`, { source }, { ...options(signal), timeout: 60_000 });
 export const listLocalComfyProjects = (signal?: AbortSignal) => http.get<LocalComfyProject[]>(`${BASE}/projects`, options(signal));
 export const createLocalComfyProject = (input: { name: string; upstream_project_id?: string; canvas_project_id?: string }, signal?: AbortSignal) => http.post<LocalComfyProject>(`${BASE}/projects`, input, options(signal));
 export const saveLocalComfyScript = (id: string, script: string, signal?: AbortSignal) => http.post<LocalComfyProject>(`${BASE}/projects/${encodeURIComponent(id)}/script`, { script, format: "text" }, options(signal));

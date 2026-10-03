@@ -4,6 +4,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
+import { channelConnectionForRequest, type ChannelConnectionFields } from "@/lib/channel-connection";
 import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { defaultProtocolForCapability, defaultProtocolForModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
@@ -344,7 +345,7 @@ export type WorkflowGraphPreview = {
 // 兼容仍在使用旧目录标识的会话恢复和模型选择器。
 export const PUBLIC_MODEL_CATALOG_ID = "managed";
 
-export type ModelChannel = {
+export type ModelChannel = ChannelConnectionFields & {
     id: string;
     name: string;
     publicAlias?: string;
@@ -381,7 +382,7 @@ export type ModelChannel = {
     }>;
 };
 
-export type AiConfig = {
+export type AiConfig = ChannelConnectionFields & {
     channelMode: "remote";
     baseUrl: string;
     apiKey: string;
@@ -872,6 +873,9 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         baseUrl: providedBaseUrl || (interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat)),
         apiKey: channel?.apiKey || "",
         secretKey: channel?.secretKey || "",
+        authMode: channel?.authMode,
+        authHeader: channel?.authHeader,
+        apiPathPrefix: channel?.apiPathPrefix,
         headers: Array.isArray(channel?.headers) ? channel.headers.map((header) => ({ name: String(header.name || ""), value: String(header.value || "") })) : [],
         apiFormat,
         interfaceType,
@@ -963,7 +967,7 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.includes(model));
-    return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName) });
+    return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, authMode: config.authMode, authHeader: config.authHeader, apiPathPrefix: config.apiPathPrefix, models: config.models.map(modelOptionName) });
 }
 
 export function logicalModelIDForConfig(config: AiConfig) {
@@ -972,7 +976,7 @@ export function logicalModelIDForConfig(config: AiConfig) {
 }
 
 export function channelConnectionSignature(channel: ModelChannel) {
-    return [channel.baseUrl.trim(), channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", JSON.stringify(channel.headers || [])].join("\n");
+    return [channel.baseUrl.trim(), channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", channel.authMode || "bearer", channel.authHeader || "", channel.apiPathPrefix || "", JSON.stringify(channel.headers || [])].join("\n");
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -985,8 +989,10 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         || (channel.scope === "system" || !usesOpenAICompatibleProtocolDefault(channel.apiFormat)
             ? undefined
             : (modelProfile?.capability ? defaultProtocolForCapability(modelProfile.capability) : defaultProtocolForModel(model)));
+    const connection = channelConnectionForRequest({ ...channel, interfaceType });
     return {
         ...config,
+        ...connection,
         model,
         baseUrl: channel.baseUrl,
         apiKey: channel.credentialRef ? "" : channel.apiKey,

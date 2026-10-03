@@ -70,6 +70,7 @@ func recordTaskDiagnosticInput(ctx context.Context, input canvasGenerationInput)
 }
 
 func recordTaskRequestEvidence(req *http.Request, evidence model.TaskRequestEvidence, body []byte, err error) {
+	body = redactProviderRequestBytes(req, body)
 	r := taskRequestRecorder(req.Context())
 	if r == nil {
 		return
@@ -119,6 +120,9 @@ func recordTaskRequestEvidence(req *http.Request, evidence model.TaskRequestEvid
 	if responseLimited {
 		evidence.Outcome = "response_limit"
 	}
+	evidence.Summary = string(redactProviderRequestBytes(req, []byte(evidence.Summary)))
+	evidence.ProviderCode = string(redactProviderRequestBytes(req, []byte(evidence.ProviderCode)))
+	evidence.RequestID = string(redactProviderRequestBytes(req, []byte(evidence.RequestID)))
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Keep the original submit and the latest seven calls, including the terminal response.

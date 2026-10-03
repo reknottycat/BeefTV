@@ -4,6 +4,7 @@ import { Link } from "react-router";
 
 import { getLocalComfyConfig, listLocalComfyRecipes, localComfyServiceUrl } from "@/services/api/local-comfy";
 import { publicLocalComfyEndpoint } from "@/lib/local-comfy-settings";
+import { ModelCatalogPane } from "./model-catalog-pane";
 
 export function LocalComfySettingsPane() {
     const status = useQuery({
@@ -18,7 +19,7 @@ export function LocalComfySettingsPane() {
     const readyRecipes = status.data?.recipes.filter((recipe) => recipe.ready) || [];
     const upstream = publicLocalComfyEndpoint(status.data?.config.comfyui_endpoint);
 
-    return <section className="settings-section mb-4" aria-labelledby="local-comfy-settings-title">
+    return <><section className="settings-section mb-4" aria-labelledby="local-comfy-settings-title">
         <div className="settings-pane-header">
             <div className="min-w-0"><h2 id="local-comfy-settings-title">本地 ComfyUI 工作流</h2><p>使用已登记的配方和参考图，本地工作流独立于下方模型渠道。</p></div>
             <Link to="/local-comfy" className="text-sm underline underline-offset-4">打开本地 ComfyUI 工作台</Link>
@@ -32,5 +33,5 @@ export function LocalComfySettingsPane() {
             {status.data.recipes.length ? <ul className="space-y-2">{status.data.recipes.map((recipe) => <li key={recipe.id} className="flex flex-wrap items-center gap-2 text-sm"><span>{recipe.name}</span><Tag>{recipe.ready ? "已配置" : "未配置"}</Tag><span className="text-xs text-foreground/50">{recipe.reference_slots} 张参考图</span></li>)}</ul> : <p className="text-sm text-foreground/60">尚无已登记配方。</p>}
             <p className="text-xs text-foreground/50">配方状态表示工作流已配置；真实生成与结果验收在工作台中记录。</p>
         </div> : null}
-    </section>;
+    </section><ModelCatalogPane /></>;
 }

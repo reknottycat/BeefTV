@@ -52,3 +52,22 @@ generation evidence separately when GPU resources have been coordinated.
 Deployment and update procedures are maintained in `deploy/spark/`. The source
 branch remains based on the pinned upstream commit; updating source, building
 images and upgrading persistent databases are separate reviewable operations.
+
+## Read-only recipe and model directories
+
+The local Comfy workspace has three directory sources: registered Comfy
+recipes (`comfy.recipes`), RunningHub's official standard-endpoint snapshot
+(`rh.standard`) and its public LLM directory (`rh.llm`). Directory GET requests
+read the cache; an explicit refresh reads only the selected source. The two
+RunningHub sources use fixed anonymous public GETs without keys or cookies.
+Comfy recipe refresh inspects registered node classes, without submitting a
+GPU job or automatically registering every installed checkpoint.
+
+Discovery and static checks do not establish account access, billing
+authorization or successful generation. Directory entries are not connected
+to native project defaults or unified generation dispatch. Community AI apps,
+workflow-ID import and weight/resource listings are separate capabilities.
+See [Channel connection options](channel-connection-options.md) for the three
+non-secret connection fields, public text-provider presets and directory
+boundaries; the adapter's detailed API remains in
+[CONTRACT.md](../tools/comfy_adapter/CONTRACT.md).

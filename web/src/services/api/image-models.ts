@@ -1,5 +1,6 @@
 import { sanitizeChannelModelCatalogItem, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
-import { createChannelTransport } from "@/services/api/channel-transport";
+import { channelConnectionForRequest, redactChannelSecrets } from "@/lib/channel-connection";
+import { ChannelResponseError, createChannelTransport, isChannelCancellation } from "@/services/api/channel-transport";
 import { readAxiosError, validateGeminiPayload } from "@/services/api/image-response";
 import { geminiApiUrl, geminiHeaders } from "@/services/api/image-transport";
 import { http } from "@/services/api/request";
@@ -22,7 +23,7 @@ type OpenAIModelRecord = {
     supported_endpoint_types?: string[];
 };
 type OpenAIModelPayload = { data?: OpenAIModelRecord[]; error?: { message?: string } };
-type ChannelCatalogConfig = Pick<ModelChannel, "baseUrl" | "apiKey" | "apiFormat" | "headers">;
+type ChannelCatalogConfig = Pick<ModelChannel, "baseUrl" | "apiKey" | "apiFormat" | "headers" | "interfaceType" | "authMode" | "authHeader" | "apiPathPrefix">;
 
 async function fetchOpenAIModelCatalog(config: ChannelCatalogConfig) {
     const payload = await createChannelTransport(config, "image").get<OpenAIModelPayload>(buildApiUrl(config.baseUrl, "/models"));
@@ -52,7 +53,7 @@ export async function fetchImageModels(config: ChannelCatalogConfig) {
         const catalog = await fetchOpenAIModelCatalog(config);
         return catalog.map((model) => model.id).sort((a, b) => a.localeCompare(b));
     } catch (error) {
-        throw new Error(readAxiosError(error, "读取模型失败"));
+        throw new Error(readAxiosError(redactCatalogFailure(error, config), "读取模型失败"));
     }
 }
 
@@ -72,12 +73,15 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
         return { models, catalog: models.map((id) => ({ id })) };
     }
     try {
+        const connection = channelConnectionForRequest(channel);
         // 登录态由同源后端代取模型目录，避免每个 OpenAI 兼容服务分别维护浏览器 CORS 白名单。
         const result = await http.post<{ models?: Array<string | ChannelModelCatalogItem> }>("/ai/models", {
             baseUrl: channel.baseUrl,
             apiKey: managed ? "" : channel.apiKey,
             apiFormat: channel.apiFormat,
             headers: channel.headers,
+            ...connection,
+            interfaceType: channel.interfaceType,
             channelId: managed ? channel.id : undefined,
             credentialRef: managed ? "beefapi-enterprise" : undefined,
         });
@@ -92,6 +96,14 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
         const sortedCatalog = Array.from(catalog.values()).sort((a, b) => a.id.localeCompare(b.id));
         return { models, catalog: sortedCatalog };
     } catch (error) {
-        throw new Error(readAxiosError(error, "读取模型失败"));
+        throw new Error(readAxiosError(redactCatalogFailure(error, channel), "读取模型失败"));
     }
+}
+
+function redactCatalogFailure(error: unknown, config: ChannelCatalogConfig) {
+    if (isChannelCancellation(error)) return error;
+    const secrets = [config.apiKey, ...(config.headers || []).map((header) => header.value)];
+    if (error instanceof ChannelResponseError) return new ChannelResponseError(redactChannelSecrets(error.data, secrets), error.status);
+    if (error instanceof Error) return new Error(String(redactChannelSecrets(error.message, secrets)));
+    return redactChannelSecrets(error, secrets);
 }

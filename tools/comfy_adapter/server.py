@@ -20,6 +20,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error, parse, request
 import uuid
 
+if __package__:
+    from .model_catalog import CatalogError, ModelCatalog, SOURCES
+else:
+    from model_catalog import CatalogError, ModelCatalog, SOURCES
+
 PREFIX = "/api/local-comfy/v1"
 MAX_REFERENCE_BYTES = 10 * 1024 * 1024
 MAX_BODY_BYTES = 15 * 1024 * 1024
@@ -27,6 +32,11 @@ MAX_RESULT_BYTES = 256 * 1024 * 1024
 ACTIVE = {"submitting", "submitted", "running", "submission_unknown"}
 IMAGE_MIMES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 RESULT_MIMES = {**IMAGE_MIMES, "image/gif": ".gif", "video/mp4": ".mp4", "video/webm": ".webm"}
+PUBLIC_CATALOG_URLS = {
+    "rh.standard": "https://raw.githubusercontent.com/HM-RunningHub/OpenClaw_RH_Skills/main/runninghub/data/capabilities.json",
+    "rh.llm": "https://llm.runninghub.ai/v1/models",
+}
+MAX_CATALOG_BYTES = 5 * 1024 * 1024
 
 
 class ApiError(Exception):
@@ -109,6 +119,30 @@ def validate_queue(value):
 class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+def read_public_catalog(source):
+    """Only fixed, public HTTPS directories; no environment, auth or redirects."""
+    if source not in PUBLIC_CATALOG_URLS:
+        raise ValueError("unsupported_source")
+    url = PUBLIC_CATALOG_URLS[source]
+    opener = request.build_opener(request.ProxyHandler({}), NoRedirect())
+    req = request.Request(url, headers={"Accept": "application/json", "Accept-Encoding": "identity"}, method="GET")
+    try:
+        response = opener.open(req, timeout=15)
+    except error.HTTPError as exc:
+        exc.close()
+        raise ValueError("catalog_read_failed") from None
+    with response:
+        if response.geturl() != url:
+            raise ValueError("catalog_redirect_not_allowed")
+        declared = response.headers.get("Content-Length")
+        if declared and (not declared.isdigit() or int(declared) > MAX_CATALOG_BYTES):
+            raise ValueError("catalog_response_too_large")
+        raw = response.read(MAX_CATALOG_BYTES + 1)
+        if len(raw) > MAX_CATALOG_BYTES or (declared and len(raw) != int(declared)):
+            raise ValueError("invalid_catalog_size")
+        return raw
 
 
 class ComfyClient:
@@ -239,7 +273,8 @@ def validate_recipe(item):
 
 
 class Adapter:
-    def __init__(self, state_dir, client=None, recipes=None, enabled=False, max_result_bytes=MAX_RESULT_BYTES):
+    def __init__(self, state_dir, client=None, recipes=None, enabled=False, max_result_bytes=MAX_RESULT_BYTES,
+                 catalog_reader=None, catalog_clock=time.time):
         self.state = Path(state_dir).resolve()
         self.state.mkdir(parents=True, exist_ok=True)
         for name in ("references", "results", "staging"):
@@ -249,6 +284,8 @@ class Adapter:
         self.client, self.recipes = client or ComfyClient(), recipes or {}
         for recipe in self.recipes.values():
             validate_recipe(recipe)
+        self.catalog = ModelCatalog(catalog_reader or self.read_catalog, registered_recipes=self.recipes, clock=catalog_clock)
+        self.catalog_refresh_locks = {source: threading.Lock() for source in SOURCES}
         self.enabled, self.max_result_bytes = enabled, max_result_bytes
         self.lock = threading.RLock()
         database_path = self.state / "adapter.sqlite3"
@@ -590,8 +627,76 @@ class Adapter:
         self.put("job", job)
         return job
 
+    def read_catalog(self, source):
+        if source in PUBLIC_CATALOG_URLS:
+            return read_public_catalog(source)
+        if source != "comfy.recipes":
+            raise ValueError("unsupported_source")
+        classes = {node["class_type"] for recipe in self.recipes.values() for node in recipe["workflow"].values()}
+        if len(classes) > 128:
+            raise ValueError("catalog_too_many_classes")
+        result, deadline = {}, time.monotonic() + 25
+        for name in sorted(classes):
+            if len(name) > 200 or any(ord(char) < 32 for char in name) or time.monotonic() >= deadline:
+                raise ValueError("catalog_read_budget_exceeded")
+            try:
+                value = self.client.json("/object_info/" + parse.quote(name, safe=""))
+            except error.HTTPError as exc:
+                status = exc.code
+                exc.close()
+                if status == 404:
+                    continue
+                raise ValueError("catalog_read_failed") from None
+            if name in value:
+                result[name] = value[name]
+            if len(json.dumps(result).encode()) > MAX_CATALOG_BYTES:
+                raise ValueError("catalog_response_too_large")
+        return result
+
+    def catalog_result(self, result):
+        result.pop("prototypeOnly", None)
+        result["readOnly"] = True
+        result["catalogOnly"] = True
+        result["sourceUrl"] = PUBLIC_CATALOG_URLS.get(result["source"])
+        result["sourceKind"] = {"rh.standard": "official_capability_directory", "rh.llm": "public_llm_directory",
+                                "comfy.recipes": "registered_workflows"}[result["source"]]
+        return result
+
+    def dispatch_catalog(self, method, path, query, body):
+        try:
+            if method == "GET" and path == "/model-catalog":
+                fields(query, {"source", "page", "page_size", "search", "capability", "task"})
+                integers = {}
+                for key, default in (("page", 1), ("page_size", 40)):
+                    value = query.get(key, str(default))
+                    if not isinstance(value, str) or not value.isdigit() or len(value) > 6:
+                        raise CatalogError("invalid_pagination")
+                    integers[key] = int(value)
+                return self.catalog_result(self.catalog.query(query.get("source"), page=integers["page"],
+                    page_size=integers["page_size"], search=query.get("search", ""),
+                    capability=query.get("capability"), task=query.get("task")))
+            if method == "POST" and path == "/model-catalog/refresh":
+                fields(body, {"source"})
+                fields(query, set())
+                source = body.get("source")
+                if not isinstance(source, str) or source not in SOURCES:
+                    raise CatalogError("unsupported_source")
+                lock = self.catalog_refresh_locks[source]
+                if not lock.acquire(blocking=False):
+                    raise ApiError(409, "catalog_refresh_busy")
+                try:
+                    return self.catalog_result(self.catalog.refresh(source))
+                finally:
+                    lock.release()
+            raise ApiError(404, "route_not_found")
+        except CatalogError as exc:
+            raise ApiError(400, exc.reason) from None
+
     def dispatch(self, method, path, query=None, body=None):
         query, body = query or {}, body or {}
+        # Directory reads and refreshes never hold the jobs/database lock.
+        if path in ("/model-catalog", "/model-catalog/refresh"):
+            return self.dispatch_catalog(method, path, query, body)
         with self.lock:
             if path == "/config" and method == "GET":
                 return self.config()

@@ -15,7 +15,11 @@ type ChannelModelsRequest struct {
 	BaseURL       string           `json:"baseUrl"`
 	APIKey        string           `json:"apiKey"`
 	APIFormat     string           `json:"apiFormat"`
+	InterfaceType string           `json:"interfaceType,omitempty"`
 	Headers       []OutboundHeader `json:"headers"`
+	AuthMode      string           `json:"authMode,omitempty"`
+	AuthHeader    string           `json:"authHeader,omitempty"`
+	APIPathPrefix string           `json:"apiPathPrefix,omitempty"`
 	ChannelID     string           `json:"channelId"`
 	CredentialRef string           `json:"credentialRef"`
 }
@@ -129,6 +133,13 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 	if err != nil {
 		return nil, err
 	}
+	connection, err := NormalizeChannelConnection(ChannelConnection{AuthMode: input.AuthMode, AuthHeader: input.AuthHeader, APIPathPrefix: input.APIPathPrefix}, headers)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateProviderChannelConnection(ctx, providerConfig{APIFormat: apiFormat, InterfaceType: input.InterfaceType, APIKey: apiKey, AuthMode: connection.AuthMode, AuthHeader: connection.AuthHeader, APIPathPrefix: connection.APIPathPrefix}); err != nil {
+		return nil, err
+	}
 
 	target := apiURL(baseURL, "/models")
 	if apiFormat == "gemini" {
@@ -137,6 +148,10 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 		}
 		target = baseURL + "/models"
 	}
+	target, err = ApplyChannelPathPrefix(target, connection.APIPathPrefix)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := ValidateOutboundURL(target); err != nil {
 		return nil, err
 	}
@@ -144,12 +159,12 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 	if err != nil {
 		return nil, BadAuthRequest("模型服务地址无效")
 	}
+	ApplyOutboundHeaders(request, headers)
 	if apiFormat == "gemini" {
 		request.Header.Set("x-goog-api-key", apiKey)
 	} else {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
+		ApplyChannelAuth(request, connection, apiKey)
 	}
-	ApplyOutboundHeaders(request, headers)
 
 	// 只代理固定的模型目录 GET；用户密钥仅用于本次请求，不写入数据库或日志。
 	data, _, err := doBinary(request)

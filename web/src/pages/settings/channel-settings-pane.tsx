@@ -9,6 +9,8 @@ import { WorkspaceState } from "@/components/layout/workspace-state";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
 import { awaitModelConfigSaved, manualChannelModelPatch } from "@/lib/channel-settings-actions";
+import { channelConnectionForRequest, hasCustomChannelConnection, isStandardChannelConnectionProtocol, validateChannelConnection } from "@/lib/channel-connection";
+import { TEXT_PROVIDER_PRESETS, textProviderChannelDraft, type TextProviderPresetId } from "@/lib/text-provider-presets";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
 import { channelHasGenerationCredential, channelHasManagedBeefAPICredential, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefAPIChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
@@ -132,8 +134,8 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
         updateChannel(channel.id, { apiFormat, interfaceType: undefined, baseUrl });
     };
 
-    const addChannel = () => {
-        const channel = createModelChannel({ name: `渠道 ${userChannels.length + 1}` });
+    const addChannel = (presetId?: TextProviderPresetId) => {
+        const channel = createModelChannel(presetId ? textProviderChannelDraft(presetId) : { name: `渠道 ${userChannels.length + 1}` });
         updateChannels([...config.channels, channel]);
         setNewChannelId(channel.id);
         setEditingChannelId(channel.id);
@@ -277,12 +279,24 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                     <Button className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<RefreshCw className="size-4" />} loading={loadingChannelIds.includes("all")} disabled={loadingChannelIds.some((id) => id !== "all")} onClick={() => void refreshAllModels()}>
                         拉取全部
                     </Button>
-                    <Button className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<Plus className="size-4" />} onClick={addChannel}>
+                    <Button className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<Plus className="size-4" />} onClick={() => addChannel()}>
                         新增渠道
                     </Button>
                 </div>
             </div>
             <div className="mb-3"><ModelConfigSaveFeedback /></div>
+            <section className="settings-section mb-3" aria-labelledby="text-provider-presets-title">
+                <h3 id="text-provider-presets-title" className="text-sm font-semibold">文本渠道预置</h3>
+                <p className="mt-1 text-xs leading-5 text-foreground/55">使用线上 API。选择预置后填写对应账号的 API Key，再选择默认文本模型。此次预置仅用于文字生成。</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                    {TEXT_PROVIDER_PRESETS.map((preset) => (
+                        <Button key={preset.id} icon={<Plus className="size-4" />} onClick={() => addChannel(preset.id)}>
+                            {preset.name}
+                        </Button>
+                    ))}
+                </div>
+                <p className="mt-2 text-xs leading-5 text-foreground/55">MiniMax 预置使用国内接口；国际账号可在 Base URL 中填写 https://api.minimax.io/v1。</p>
+            </section>
             {onOpenRunningHub ? (
                 <section className="settings-section mb-3">
                     <div className="mb-3">
@@ -308,6 +322,10 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                     {userChannels.map((channel) => {
                         const editing = editingChannelId === channel.id;
                         const builtinBeefAPI = isBuiltinBeefAPIChannel(channel);
+                        const presetNotice = TEXT_PROVIDER_PRESETS.find((preset) => preset.baseUrl === channel.baseUrl.trim().replace(/\/+$/u, "") && preset.apiPathPrefix === channel.apiPathPrefix)?.connectionNotice;
+                        const connectionFieldsEditable = channel.apiFormat === "openai" && isStandardChannelConnectionProtocol(channel.interfaceType);
+                        const authFieldsError = validateChannelConnection({ authMode: channel.authMode, authHeader: channel.authHeader }, channel.headers);
+                        const prefixError = validateChannelConnection({ apiPathPrefix: channel.apiPathPrefix });
                         return (
                             <section key={channel.id} aria-labelledby={`channel-${channel.id}-title`} className="settings-channel p-2.5 sm:p-3">
                                 <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2.5">
@@ -399,6 +417,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                                 <div>
                                                     <h2>连接信息</h2>
                                                     <p className="mt-1 text-xs text-foreground/50">用于拉取模型目录并向当前渠道发起请求。</p>
+                                                    {presetNotice ? <p role="status" className="mt-2 text-xs leading-5 text-foreground/70">{presetNotice}</p> : null}
                                                 </div>
                                                 <div className="model-editor-connection-fields grid gap-3 sm:grid-cols-2">
                                                     <Form.Item label="渠道名称" htmlFor={`channel-${channel.id}-name`} className="mb-0 sm:col-span-1">
@@ -461,6 +480,63 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                                                     onBlur={(event) => updateChannel(channel.id, { secretKey: event.target.value.trim() })}
                                                                 />
                                                             </Form.Item>
+                                                            <Form.Item
+                                                                label="认证方式"
+                                                                htmlFor={`channel-${channel.id}-auth-mode`}
+                                                                className="mb-0 sm:col-span-1"
+                                                                validateStatus={authFieldsError ? "error" : undefined}
+                                                                help={<span id={`channel-${channel.id}-auth-help`}>{authFieldsError || "复用上方 API Key；默认使用 Bearer 认证。"}</span>}
+                                                            >
+                                                                <Select<NonNullable<ModelChannel["authMode"]>>
+                                                                    id={`channel-${channel.id}-auth-mode`}
+                                                                    value={channel.authMode || "bearer"}
+                                                                    disabled={!connectionFieldsEditable}
+                                                                    aria-invalid={Boolean(authFieldsError)}
+                                                                    aria-describedby={`channel-${channel.id}-auth-help`}
+                                                                    options={[{ label: "Bearer（默认）", value: "bearer" }, { label: "API Key 请求头", value: "api-key" }]}
+                                                                    onChange={(authMode) => updateChannel(channel.id, { authMode, authHeader: authMode === "api-key" ? channel.authHeader || "X-Api-Key" : "" })}
+                                                                />
+                                                            </Form.Item>
+                                                            {channel.authMode === "api-key" ? (
+                                                                <Form.Item label="API Key 请求头名称" htmlFor={`channel-${channel.id}-auth-header`} className="mb-0 sm:col-span-1" validateStatus={authFieldsError ? "error" : undefined}>
+                                                                    <Input
+                                                                        id={`channel-${channel.id}-auth-header`}
+                                                                        value={channel.authHeader || ""}
+                                                                        maxLength={128}
+                                                                        disabled={!connectionFieldsEditable}
+                                                                        placeholder="X-Api-Key"
+                                                                        aria-invalid={Boolean(authFieldsError)}
+                                                                        aria-describedby={`channel-${channel.id}-auth-help`}
+                                                                        onChange={(event) => updateChannel(channel.id, { authHeader: event.target.value })}
+                                                                        onBlur={(event) => updateChannel(channel.id, { authHeader: event.target.value.trim() })}
+                                                                    />
+                                                                </Form.Item>
+                                                            ) : null}
+                                                            <Form.Item
+                                                                label="API 路径前缀（可选）"
+                                                                htmlFor={`channel-${channel.id}-path-prefix`}
+                                                                className="mb-0 sm:col-span-2"
+                                                                validateStatus={prefixError ? "error" : undefined}
+                                                                help={<span id={`channel-${channel.id}-prefix-help`}>{prefixError || "留空保留默认路径。填写 / 使用根路径，或填写 /gateway/v1 等同一服务内的路径；不能填写域名、查询参数或密钥。"}</span>}
+                                                            >
+                                                                <Input
+                                                                    id={`channel-${channel.id}-path-prefix`}
+                                                                    value={channel.apiPathPrefix || ""}
+                                                                    maxLength={1024}
+                                                                    disabled={!connectionFieldsEditable}
+                                                                    placeholder="例如 /gateway/v1"
+                                                                    aria-invalid={Boolean(prefixError)}
+                                                                    aria-describedby={`channel-${channel.id}-prefix-help`}
+                                                                    onChange={(event) => updateChannel(channel.id, { apiPathPrefix: event.target.value })}
+                                                                    onBlur={(event) => updateChannel(channel.id, { apiPathPrefix: event.target.value.trim() })}
+                                                                />
+                                                            </Form.Item>
+                                                            {!connectionFieldsEditable ? (
+                                                                <div className="sm:col-span-2">
+                                                                    <p className="text-xs leading-5 text-foreground/55">专用协议使用原有鉴权和路径配置；这三个字段只适用于标准 OpenAI 接口。</p>
+                                                                    {hasCustomChannelConnection(channel) ? <Button id={`channel-${channel.id}-reset-connection`} className="mt-2" size="small" onClick={() => updateChannel(channel.id, { authMode: "bearer", authHeader: "", apiPathPrefix: "" })}>清除自定义认证与路径</Button> : null}
+                                                                </div>
+                                                            ) : null}
                                                         </>
                                                     )}
                                                     <div className="sm:col-span-2">
@@ -557,8 +633,11 @@ export function isChannelReady(channel: ModelChannel) {
 }
 
 export function focusInvalidChannelField(channel: ModelChannel) {
-    const baseUrlError = channelConnectionError({ ...channel, apiKey: "valid", secretKey: "valid" });
-    const field = baseUrlError ? "base-url" : !channelHasGenerationCredential(channel) ? "api-key" : requiresSecretKey(channel) && !channel.secretKey?.trim() ? "secret-key" : "models";
+    const baseUrlError = channelConnectionError({ ...channel, authMode: undefined, authHeader: undefined, apiPathPrefix: undefined, apiKey: "valid", secretKey: "valid" });
+    const authFieldsError = validateChannelConnection({ authMode: channel.authMode, authHeader: channel.authHeader }, channel.headers);
+    const prefixError = validateChannelConnection({ apiPathPrefix: channel.apiPathPrefix });
+    const unsupportedConnection = (channel.apiFormat !== "openai" || !isStandardChannelConnectionProtocol(channel.interfaceType)) && hasCustomChannelConnection(channel);
+    const field = baseUrlError ? "base-url" : unsupportedConnection ? "reset-connection" : authFieldsError ? channel.authMode === "api-key" ? "auth-header" : "auth-mode" : prefixError ? "path-prefix" : !channelHasGenerationCredential(channel) ? "api-key" : requiresSecretKey(channel) && !channel.secretKey?.trim() ? "secret-key" : "models";
     requestAnimationFrame(() => {
         const element = document.getElementById(`channel-${channel.id}-${field}`);
         element?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -760,13 +839,18 @@ function channelConnectionError(channel: ModelChannel, connection?: BeefAPIConne
         if (connection?.state === "connected" || channelHasManagedBeefAPICredential(channel)) return "";
         return "请先连接 BeefAPI";
     }
+    try {
+        channelConnectionForRequest(channel);
+    } catch (error) {
+        return error instanceof Error ? error.message : "渠道连接配置无效";
+    }
     if (!channelHasGenerationCredential(channel)) return "请填写 API Key / Access Key";
     if (requiresSecretKey(channel) && !channel.secretKey?.trim()) return "当前协议需要填写 Secret Key";
     return "";
 }
 
 function channelConnectionSignature(channel: ModelChannel) {
-    return [channel.baseUrl.trim(), channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, JSON.stringify(channel.headers || [])].join("\n");
+    return [channel.baseUrl.trim(), channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", channel.authMode || "bearer", channel.authHeader || "", channel.apiPathPrefix || "", JSON.stringify(channel.headers || [])].join("\n");
 }
 
 function channelProtocolLabel(channel: ModelChannel) {

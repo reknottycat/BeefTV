@@ -67,14 +67,12 @@ func postStreamingBinary(ctx context.Context, config providerConfig, path string
 	if err != nil {
 		return nil, "", fmt.Errorf("序列化上游请求失败：%w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), bytes.NewReader(data))
+	req, err := newProviderChannelRequest(ctx, config, http.MethodPost, path, bytes.NewReader(data))
 	if err != nil {
 		return nil, "", err
 	}
-	applyProviderAuth(req, config)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	ApplyOutboundHeaders(req, config.Headers)
 	return doBinaryWithConsumer(req, onChunk)
 }
 
@@ -83,13 +81,11 @@ func postJSON(ctx context.Context, config providerConfig, path string, body inte
 	if err != nil {
 		return fmt.Errorf("序列化上游请求失败：%w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), bytes.NewReader(data))
+	req, err := newProviderChannelRequest(ctx, config, http.MethodPost, path, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
-	applyProviderAuth(req, config)
 	req.Header.Set("Content-Type", "application/json")
-	ApplyOutboundHeaders(req, config.Headers)
 	return doJSON(req, target)
 }
 
@@ -98,13 +94,11 @@ func postJSONWithSubmissionKey(ctx context.Context, config providerConfig, path 
 	if err != nil {
 		return fmt.Errorf("序列化上游请求失败：%w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), bytes.NewReader(data))
+	req, err := newProviderChannelRequest(ctx, config, http.MethodPost, path, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
-	applyProviderAuth(req, config)
 	req.Header.Set("Content-Type", "application/json")
-	ApplyOutboundHeaders(req, config.Headers)
 	if key, _ := ctx.Value(providerSubmissionKeyContext{}).(string); strings.TrimSpace(key) != "" {
 		req.Header.Set("Idempotency-Key", strings.TrimSpace(key))
 	}
@@ -126,27 +120,23 @@ func applyProviderAuth(req *http.Request, config providerConfig) {
 		req.Header.Set("x-goog-api-key", config.APIKey)
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	ApplyChannelAuth(req, providerChannelConnection(config), config.APIKey)
 }
 
 func postForm(ctx context.Context, config providerConfig, path string, contentType string, body io.Reader, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), body)
+	req, err := newProviderChannelRequest(ctx, config, http.MethodPost, path, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	req.Header.Set("Content-Type", contentType)
-	ApplyOutboundHeaders(req, config.Headers)
 	return doJSON(req, target)
 }
 
 func getJSON(ctx context.Context, config providerConfig, path string, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL(config.BaseURL, path), nil)
+	req, err := newProviderChannelRequest(ctx, config, http.MethodGet, path, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	ApplyOutboundHeaders(req, config.Headers)
 	return doJSON(req, target)
 }
 
@@ -155,23 +145,19 @@ func postBinary(ctx context.Context, config providerConfig, path string, body in
 	if err != nil {
 		return nil, "", fmt.Errorf("序列化上游请求失败：%w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), bytes.NewReader(data))
+	req, err := newProviderChannelRequest(ctx, config, http.MethodPost, path, bytes.NewReader(data))
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	req.Header.Set("Content-Type", "application/json")
-	ApplyOutboundHeaders(req, config.Headers)
 	return doBinary(req)
 }
 
 func getBinary(ctx context.Context, config providerConfig, path string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL(config.BaseURL, path), nil)
+	req, err := newProviderChannelRequest(ctx, config, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	ApplyOutboundHeaders(req, config.Headers)
 	return doBinary(req)
 }
 
@@ -184,14 +170,22 @@ func getExternalBinary(ctx context.Context, rawURL string) ([]byte, string, erro
 }
 
 func getProviderExternalBinary(ctx context.Context, config providerConfig, rawURL string) ([]byte, string, error) {
+	config, err := normalizeProviderChannelConnection(config)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := validateProviderChannelConnection(ctx, config); err != nil {
+		return nil, "", err
+	}
 	downloadURL := providerDownloadURL(config.BaseURL, rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
 	if sameProviderOrigin(config.BaseURL, downloadURL) {
-		applyProviderAuth(req, config)
 		ApplyOutboundHeaders(req, config.Headers)
+		applyProviderAuth(req, config)
+		rememberProviderCredential(req, config.APIKey)
 	}
 	return doBinary(req)
 }
@@ -349,6 +343,9 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		return nil, "", err
 	}
 	mimeType := resp.Header.Get("Content-Type")
+	textResponse := strings.Contains(strings.ToLower(mimeType), "json") || strings.Contains(strings.ToLower(mimeType), "event-stream") || strings.HasPrefix(strings.ToLower(mimeType), "text/")
+	secret, _ := req.Context().Value(providerCredentialContext{}).(string)
+	redactor := providerStreamRedactor{secret: []byte(secret)}
 	var buffered bytes.Buffer
 	reader := io.LimitReader(resp.Body, responseLimit+1)
 	chunk := make([]byte, 32<<10)
@@ -364,7 +361,13 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 			}
 			_, _ = buffered.Write(chunk[:readCount])
 			if onChunk != nil {
-				onChunk(mimeType, chunk[:readCount])
+				if textResponse {
+					if safe := redactor.push(chunk[:readCount], false); len(safe) > 0 {
+						onChunk(mimeType, safe)
+					}
+				} else {
+					onChunk(mimeType, chunk[:readCount])
+				}
 			}
 		}
 		if errors.Is(readErr, io.EOF) {
@@ -376,6 +379,14 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		}
 	}
 	data := buffered.Bytes()
+	if onChunk != nil && textResponse {
+		if tail := redactor.push(nil, true); len(tail) > 0 {
+			onChunk(mimeType, tail)
+		}
+	}
+	if textResponse || json.Valid(data) || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data = redactProviderRequestBytes(req, data)
+	}
 	if int64(len(data)) > responseLimit {
 		err = fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
 		recordProviderRequest(req, startedAt, resp.StatusCode, nil, err)
@@ -385,7 +396,7 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		if runtimeService != nil {
 			_ = runtimeService.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
-		httpErr := providerHTTPError{RequestID: firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id")), StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+		httpErr := providerHTTPError{RequestID: string(redactProviderRequestBytes(req, []byte(firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id"))))), StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 		recordProviderRequest(req, startedAt, resp.StatusCode, data, httpErr)
 		return nil, "", httpErr
 	}
@@ -418,6 +429,7 @@ func providerPollingDeadline(ctx context.Context) time.Time {
 }
 
 func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode int, responseBody []byte, requestErr error) {
+	responseBody = redactProviderRequestBytes(req, responseBody)
 	metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext)
 	service := providerService(metadata)
 	if !ok || service == nil {
@@ -454,6 +466,8 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 		ErrorCode: errorCode, Error: errorText, ConcurrencyLimit: metadata.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
 		ProviderRequestID: metadata.ProviderRequestID, RequestContentType: req.Header.Get("Content-Type"), RequestBody: requestPayloadForLog(req), ResponseBody: SanitizeAPICallPayload(responseBody, ""),
 	}
+	callLog.Error = string(redactProviderRequestBytes(req, []byte(callLog.Error)))
+	callLog.RequestBody = string(redactProviderRequestBytes(req, []byte(callLog.RequestBody)))
 	if code, message := ChannelSlotFailureDetails(requestErr); code != "" {
 		callLog.ErrorCode = code
 		callLog.Error = message

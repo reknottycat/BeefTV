@@ -363,6 +363,16 @@ func executeProtocolBinaryRequestWithConsumer(ctx context.Context, config provid
 	if err := spec.Validate(); err != nil {
 		return nil, "", err
 	}
+	config, err := normalizeProviderChannelConnection(config)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := validateProviderChannelConnection(ctx, config); err != nil {
+		return nil, "", err
+	}
+	if err := validateProtocolChannelConnection(config, spec); err != nil {
+		return nil, "", err
+	}
 	method := strings.ToUpper(strings.TrimSpace(spec.Method))
 	body, contentType, err := protocolRequestBody(ctx, config, spec)
 	if err != nil {
@@ -372,10 +382,20 @@ func executeProtocolBinaryRequestWithConsumer(ctx context.Context, config provid
 	if err != nil {
 		return nil, "", err
 	}
+	requestURL, err = ApplyChannelPathPrefix(requestURL, config.APIPathPrefix)
+	if err != nil {
+		return nil, "", err
+	}
+	if customChannelConnection(providerChannelConnection(config)) {
+		if _, err := ApplyChannelPathPrefix(requestURL, "/"); err != nil {
+			return nil, "", err
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, method, requestURL, body)
 	if err != nil {
 		return nil, "", err
 	}
+	rememberProviderCredential(req, config.APIKey)
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -383,8 +403,12 @@ func executeProtocolBinaryRequestWithConsumer(ctx context.Context, config provid
 		req.Header.Set(name, value)
 	}
 	ApplyOutboundHeaders(req, config.Headers)
-	if err := applyProtocolAuth(req, config, spec.Auth); err != nil {
-		return nil, "", err
+	if customChannelConnection(providerChannelConnection(config)) {
+		ApplyChannelAuth(req, providerChannelConnection(config), config.APIKey)
+	} else {
+		if err := applyProtocolAuth(req, config, spec.Auth); err != nil {
+			return nil, "", err
+		}
 	}
 	if consume != nil {
 		req.Header.Set("Accept", "text/event-stream")

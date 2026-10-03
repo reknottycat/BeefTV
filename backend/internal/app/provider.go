@@ -76,6 +76,9 @@ type providerConfig struct {
 	APIKey                string                 `json:"apiKey"`
 	SecretKey             string                 `json:"secretKey"`
 	Headers               []OutboundHeader       `json:"headers"`
+	AuthMode              string                 `json:"authMode,omitempty"`
+	AuthHeader            string                 `json:"authHeader,omitempty"`
+	APIPathPrefix         string                 `json:"apiPathPrefix,omitempty"`
 	Model                 string                 `json:"model"`
 	Size                  string                 `json:"size"`
 	Quality               string                 `json:"quality"`
@@ -924,6 +927,10 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		return providerConfig{}, err
 	}
 	config.Headers = headers
+	config, err = normalizeProviderChannelConnection(config)
+	if err != nil {
+		return providerConfig{}, err
+	}
 	if s.IsLocalMode() && strings.TrimSpace(config.ChannelID) != "" {
 		// A stale hosted model selection must not reopen the system-channel
 		// catalog in a local workspace. Local users configure the provider
@@ -942,6 +949,9 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 			return providerConfig{}, err
 		}
 		return config, nil
+	}
+	if customChannelConnection(providerChannelConnection(config)) {
+		return providerConfig{}, BadAuthRequest("System channels do not accept custom connection overrides")
 	}
 	channel, err := s.SystemChannel(channelID)
 	if err != nil {

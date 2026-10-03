@@ -2,6 +2,7 @@ import axios from "axios";
 
 import { createClientId } from "@/lib/client-id";
 import { explainGenerationError } from "@/lib/generation-error";
+import { redactChannelSecrets } from "@/lib/channel-connection";
 import { channelRequest } from "@/services/api/custom-channel-relay";
 import { isSystemProxyBaseUrl } from "@/stores/use-config-store";
 
@@ -37,8 +38,8 @@ function hasBusinessFailure(value: unknown, depth = 0): boolean {
     return ["data", "result", "output"].some((key) => hasBusinessFailure(record[key], depth + 1));
 }
 
-export function assertChannelPayload(payload: unknown, status?: number): void {
-    if (hasBusinessFailure(payload)) throw new ChannelResponseError(payload, status);
+export function assertChannelPayload(payload: unknown, status?: number, secrets: readonly string[] = []): void {
+    if (hasBusinessFailure(payload)) throw new ChannelResponseError(redactChannelSecrets(payload, secrets), status);
 }
 
 async function boundedBlobPayload(blob: Blob): Promise<unknown> {
@@ -51,13 +52,13 @@ async function boundedBlobPayload(blob: Blob): Promise<unknown> {
 }
 
 // JSON/HTML cannot be a successful media artifact, even with HTTP 200.
-export async function assertChannelBlob(blob: Blob): Promise<void> {
+export async function assertChannelBlob(blob: Blob, secrets: readonly string[] = []): Promise<void> {
     const mime = blob.type.toLowerCase();
     if (/^(?:image|video|audio)\//.test(mime)) return;
     const prefix = (await blob.slice(0, 256).text()).trimStart();
     if (!/json|^text\//.test(mime) && !/^[{[]|^<(?:!doctype|html|head|body)/i.test(prefix)) return;
     const payload = await boundedBlobPayload(blob);
-    assertChannelPayload(payload);
+    assertChannelPayload(payload, undefined, secrets);
     throw new ChannelResponseError({ code: "malformed_response", message: "模型服务返回了无法解析的内容" });
 }
 
@@ -65,22 +66,26 @@ export function isChannelCancellation(error: unknown): boolean {
     return axios.isCancel(error) || (error instanceof DOMException && error.name === "AbortError");
 }
 
-export async function normalizeChannelFailure(error: unknown): Promise<never> {
+export async function normalizeChannelFailure(error: unknown, secrets: readonly string[] = []): Promise<never> {
     if (isChannelCancellation(error)) throw error;
-    if (!axios.isAxiosError(error)) throw error;
+    if (!axios.isAxiosError(error)) {
+        if (error instanceof ChannelResponseError) throw new ChannelResponseError(redactChannelSecrets(error.data, secrets), error.status);
+        if (error instanceof Error && secrets.some((secret) => secret && error.message.includes(secret))) throw new Error(String(redactChannelSecrets(error.message, secrets)));
+        throw error;
+    }
     const data = error.response?.data;
     const payload = data instanceof Blob ? await boundedBlobPayload(data) : (data ?? error.message);
-    throw new ChannelResponseError(payload, error.response?.status);
+    throw new ChannelResponseError(redactChannelSecrets(payload, secrets), error.response?.status);
 }
 
-async function channelResponse<T>(request: Promise<{ data: T; status: number }>): Promise<T> {
+async function channelResponse<T>(request: Promise<{ data: T; status: number }>, secrets: readonly string[]): Promise<T> {
     try {
         const response = await request;
-        if (response.data instanceof Blob) await assertChannelBlob(response.data);
-        else assertChannelPayload(response.data, response.status);
+        if (response.data instanceof Blob) await assertChannelBlob(response.data, secrets);
+        else assertChannelPayload(response.data, response.status, secrets);
         return response.data;
     } catch (error) {
-        return normalizeChannelFailure(error);
+        return normalizeChannelFailure(error, secrets);
     }
 }
 
@@ -88,6 +93,7 @@ export type ChannelTransportConfig = Parameters<typeof channelRequest>[0] & {
     apiKey?: string;
     baseUrl?: string;
     credentialRef?: string;
+    secretKey?: string;
 };
 
 export type ChannelCallOptions = {
@@ -108,6 +114,7 @@ export type ChannelTransport = {
  * 自定义渠道的唯一 HTTP 边界。image / video / audio 只组协议 payload，不再各自 axios + channelRequest。
  */
 export function createChannelTransport(config: ChannelTransportConfig, scene?: ChannelScene): ChannelTransport {
+    const secrets = [config.apiKey || "", config.secretKey || "", ...(config.headers || []).map((header) => header.value)];
     const sceneHeaders = (contentType?: string, extra?: Record<string, string>) => ({
         ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
         ...(contentType ? { "Content-Type": contentType } : {}),
@@ -126,7 +133,7 @@ export function createChannelTransport(config: ChannelTransportConfig, scene?: C
                 withCredentials: request.credentials === "include",
                 signal: options?.signal,
                 responseType: options?.responseType,
-            }),
+            }), secrets,
         );
     };
 
@@ -136,6 +143,6 @@ export function createChannelTransport(config: ChannelTransportConfig, scene?: C
         postForm: (upstreamUrl, body, options) => send("post", upstreamUrl, body, options),
         get: (upstreamUrl, options) => send("get", upstreamUrl, undefined, options),
         getBlob: (upstreamUrl, options) => send("get", upstreamUrl, undefined, { ...options, responseType: "blob" }),
-        getExternalBlob: (url, headers, options) => channelResponse(axios.get<Blob>(url, { headers, responseType: "blob", signal: options?.signal })),
+        getExternalBlob: (url, headers, options) => channelResponse(axios.get<Blob>(url, { headers, responseType: "blob", signal: options?.signal }), secrets),
     };
 }
