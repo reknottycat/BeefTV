@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { canvasResourceMentionToken } from "@/lib/canvas/canvas-resource-references";
+import { assertLocalComfyReferences, buildLocalComfyGenerationTaskInput } from "@/lib/local-comfy-task-input";
+import type { LocalComfyRecipe } from "@/services/api/local-comfy";
 import type { ProjectAsset, ProjectDetail } from "@/services/api/projects";
 import { buildShotAssetReferenceContext, ensureShotAssetMentionPrompt, resolveShotAssetMentionPrompt } from "@/pages/projects/detail/workflow-shot-references";
 
@@ -11,6 +13,24 @@ describe("workflow shot asset references", () => {
         expect(context.mentionReferences.map((reference) => reference.label)).toEqual(["雨夜街道", "林默"]);
         expect(context.referenceImages.map((image) => image.id)).toEqual(["asset-scene", "asset-character"]);
         expect(context.referenceImages[1]?.storageKey).toBe("resource:character-cover");
+    });
+
+    test("bound image and character resources reach native H3 input with authoritative MIME deferred", () => {
+        const recipe: LocalComfyRecipe = { id: "h3_i2v_turbo4", name: "H3", mode: "i2v", ready: true, reference_slots: 1, reference_constraints: [{ role: "first_frame", width: 864, height: 480, mime_types: ["image/png"] }] };
+        for (const [versionId, storageKey] of [["version-scene", "resource:scene-image"], ["version-character", "resource:character-cover"]]) {
+            const project = detail();
+            project.shotReferences = project.shotReferences.filter((reference) => reference.assetVersionId === versionId);
+            const context = buildShotAssetReferenceContext(project, "shot-1");
+
+            expect(context.referenceImages).toHaveLength(1);
+            expect(context.referenceImages[0]?.type).toBe("image/*");
+            expect(() => assertLocalComfyReferences(recipe, context.referenceImages, { requireOwned: true })).not.toThrow();
+            const task = buildLocalComfyGenerationTaskInput({ projectId: "TEST-project", mode: "video", model: "local-comfy:h3_i2v_turbo4", prompt: "TEST bound first frame", recipe, seed: "42", referenceImages: context.referenceImages, clientOperationId: `TEST-bound-${versionId}` });
+
+            expect(task.operation).toBe("image_to_video");
+            expect(task.input?.referenceImages).toEqual([{ storageKey, name: context.referenceImages[0]!.name, type: "image/*" }]);
+            expect(task.input).not.toHaveProperty("config");
+        }
     });
 
     test("resolves asset tokens to the submitted reference image order", () => {

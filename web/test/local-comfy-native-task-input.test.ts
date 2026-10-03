@@ -45,6 +45,18 @@ describe("native local task input without upstream requests", () => {
     test("key-only owned references defer authoritative metadata checks to the backend", () => {
         expect(() => buildLocalComfyGenerationTaskInput(input(videoRecipe, [{ ...firstFrame, width: undefined, height: undefined, type: "" }]))).not.toThrow();
     });
+    test("owned wildcard MIME defers only format validation and preserves size and resource requirements", () => {
+        const reference = { ...firstFrame, type: "image/*" };
+        expect(() => buildLocalComfyGenerationTaskInput(input(videoRecipe, [reference]))).not.toThrow();
+        expect(() => assertLocalComfyReferences(videoRecipe, [{ ...reference, storageKey: undefined }])).toThrow("类型");
+        expect(() => buildLocalComfyGenerationTaskInput(input(videoRecipe, [{ ...reference, storageKey: "resource: " }]))).toThrow("保存为素材资源");
+        expect(() => buildLocalComfyGenerationTaskInput(input(videoRecipe, [{ ...reference, storageKey: undefined, url: "https://example.invalid/ref.png" }]))).toThrow("保存为素材资源");
+        expect(() => assertLocalComfyReferences(videoRecipe, [{ ...reference, width: 1024 }])).toThrow("864×480");
+        expect(() => assertLocalComfyReferences(videoRecipe, [{ ...reference, height: 576 }])).toThrow("864×480");
+        for (const type of ["image/jpeg", "image/webp", "application/*", "*/*"]) {
+            expect(() => assertLocalComfyReferences(videoRecipe, [{ ...reference, type }])).toThrow("类型");
+        }
+    });
     test("stale recipes, cross-mode IDs, empty prompts and invalid seeds fail explicitly", () => {
         expect(() => buildLocalComfyGenerationTaskInput({ ...input(), recipe: { ...imageRecipe, ready: false } })).toThrow("未就绪");
         expect(() => buildLocalComfyGenerationTaskInput({ ...input(), mode: "video" })).toThrow("用途");

@@ -7,12 +7,15 @@ export function assertLocalComfyReferences(recipe: LocalComfyRecipe, images: rea
     if (options.videoCount || options.audioCount || options.mask) throw new Error("当前本地配方只接受登记的参考图片，不支持视频、音频或蒙版");
     if (images.length !== recipe.reference_slots) throw new Error(`本地配方需要 ${recipe.reference_slots} 张参考图片，当前为 ${images.length} 张`);
     images.forEach((image, index) => {
-        if (options.requireOwned && (!image.storageKey?.startsWith("resource:") || !image.storageKey.slice("resource:".length).trim())) {
+        const hasNativeResourceKey = Boolean(image.storageKey?.startsWith("resource:") && image.storageKey.slice("resource:".length).trim());
+        if (options.requireOwned && !hasNativeResourceKey) {
             throw new Error("本地参考图需先上传并保存为素材资源");
         }
         const constraint = recipe.reference_constraints?.[index];
         if (!constraint) return;
-        if (image.type && !constraint.mime_types.includes(image.type)) throw new Error(`第 ${index + 1} 张参考图类型不符合本地配方要求`);
+        // Workflow resource references carry image/* until the backend reads their actual MIME.
+        const deferResourceMime = image.type === "image/*" && hasNativeResourceKey;
+        if (image.type && !deferResourceMime && !constraint.mime_types.includes(image.type)) throw new Error(`第 ${index + 1} 张参考图类型不符合本地配方要求`);
         // The backend validates authoritative owned resource metadata again;
         // references restored with only a resource key defer absent dimensions.
         if ((image.width !== undefined && image.width !== constraint.width) || (image.height !== undefined && image.height !== constraint.height)) {
