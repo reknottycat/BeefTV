@@ -2,13 +2,15 @@
 import copy
 import io
 import json
+import os
 import tempfile
 import threading
 import unittest
 from unittest.mock import patch
 from urllib import error, request
 
-from server import Adapter, ApiError, MAX_CATALOG_BYTES, NoRedirect, PREFIX, PUBLIC_CATALOG_URLS, make_server, read_public_catalog
+from server import Adapter, ApiError, MAX_CATALOG_BYTES, NoRedirect, PREFIX, PUBLIC_CATALOG_URLS, RH_STANDARD_FALLBACK_URL, make_server, read_public_catalog
+from model_catalog import CatalogError, parse_rh_standard
 from test_model_catalog import object_info_fixture, recipe_fixture, rh_snapshot
 
 
@@ -221,6 +223,133 @@ class PublicReaderTests(unittest.TestCase):
                 build.return_value.open.return_value = response
                 with self.assertRaises(ValueError):
                     read_public_catalog("rh.llm")
+
+    def test_standard_primary_success_preserves_bytes_without_fallback(self):
+        payload = json.dumps(rh_snapshot()).encode()
+        with patch("server.request.build_opener") as build:
+            response = self.response(payload, url=PUBLIC_CATALOG_URLS["rh.standard"])
+            build.return_value.open.return_value = response
+            self.assertEqual(read_public_catalog("rh.standard"), payload)
+            self.assertEqual(build.return_value.open.call_count, 1)
+            self.assertTrue(response.closed)
+
+    def test_standard_transport_failure_uses_fixed_official_raw_rest_once(self):
+        payload = json.dumps(rh_snapshot()).encode()
+        failures = (error.URLError(ConnectionResetError(104, "TEST-transport")),
+                    OSError("TEST-transport"),
+                    error.HTTPError(PUBLIC_CATALOG_URLS["rh.standard"], 503, "TEST-transport", {}, None))
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__), patch("server.request.build_opener") as build:
+                build.return_value.open.side_effect = [failure, self.response(payload, url=RH_STANDARD_FALLBACK_URL)]
+                self.assertEqual(read_public_catalog("rh.standard"), payload)
+                calls = build.return_value.open.call_args_list
+                self.assertEqual(len(calls), 2)
+                self.assertEqual([call.args[0].full_url for call in calls],
+                                 [PUBLIC_CATALOG_URLS["rh.standard"], RH_STANDARD_FALLBACK_URL])
+                self.assertTrue(all(call.kwargs == {"timeout": 15} for call in calls))
+                req = calls[1].args[0]
+                self.assertEqual(req.get_method(), "GET")
+                self.assertIsNone(req.data)
+                self.assertEqual({key.lower(): value for key, value in req.header_items()}, {
+                    "accept": "application/vnd.github.raw+json", "accept-encoding": "identity",
+                    "user-agent": "BeefTV-read-only-catalog"})
+
+    def test_standard_body_transport_failure_closes_response_and_falls_back_once(self):
+        class InterruptedResponse(io.BytesIO):
+            def read(self, _):
+                raise OSError("TEST-interrupted-read")
+
+        broken = InterruptedResponse()
+        broken.headers = {}
+        broken.geturl = lambda: PUBLIC_CATALOG_URLS["rh.standard"]
+        with patch("server.request.build_opener") as build:
+            build.return_value.open.side_effect = [broken, self.response(b"{}", url=RH_STANDARD_FALLBACK_URL)]
+            self.assertEqual(read_public_catalog("rh.standard"), b"{}")
+            self.assertEqual(build.return_value.open.call_count, 2)
+            self.assertTrue(broken.closed)
+
+    def test_standard_validation_and_redirect_failures_never_fall_back(self):
+        primary = PUBLIC_CATALOG_URLS["rh.standard"]
+        invalid = (self.response(size=MAX_CATALOG_BYTES + 1, url=primary),
+                   self.response(b"x" * (MAX_CATALOG_BYTES + 1), url=primary),
+                   self.response(size=3, url=primary), self.response(size="invalid", url=primary),
+                   self.response(url="https://untrusted.invalid"))
+        for response in invalid:
+            with self.subTest(headers=response.headers), patch("server.request.build_opener") as build:
+                build.return_value.open.return_value = response
+                with self.assertRaises(ValueError):
+                    read_public_catalog("rh.standard")
+                self.assertEqual(build.return_value.open.call_count, 1)
+                self.assertTrue(response.closed)
+        for code in (300, 301, 302, 303, 307, 308):
+            with self.subTest(code=code), patch("server.request.build_opener") as build:
+                build.return_value.open.side_effect = error.HTTPError(primary, code, "TEST-redirect", {}, None)
+                with self.assertRaisesRegex(ValueError, "^catalog_redirect_not_allowed$"):
+                    read_public_catalog("rh.standard")
+                self.assertEqual(build.return_value.open.call_count, 1)
+
+    def test_standard_http_client_failures_never_fall_back(self):
+        primary = PUBLIC_CATALOG_URLS["rh.standard"]
+        for code in (400, 401, 403, 404, 408, 409, 422, 429, 499):
+            with self.subTest(code=code), patch("server.request.build_opener") as build:
+                build.return_value.open.side_effect = error.HTTPError(primary, code, "TEST-client-error", {}, None)
+                with self.assertRaisesRegex(ValueError, "^catalog_read_failed$"):
+                    read_public_catalog("rh.standard")
+                self.assertEqual(build.return_value.open.call_count, 1)
+
+    def test_standard_malformed_content_is_rejected_by_parser_without_retry(self):
+        for payload in (b"not-json", b"\xff", b'{"endpoints":"invalid"}'):
+            with self.subTest(payload=payload), patch("server.request.build_opener") as build:
+                build.return_value.open.return_value = self.response(payload, url=PUBLIC_CATALOG_URLS["rh.standard"])
+                raw = read_public_catalog("rh.standard")
+                self.assertEqual(raw, payload)
+                with self.assertRaises(CatalogError):
+                    parse_rh_standard(raw, fetched_at="2026-10-03T00:00:00Z")
+                self.assertEqual(build.return_value.open.call_count, 1)
+
+    def test_fallback_validation_and_transport_failure_have_no_third_attempt(self):
+        failures = (OSError("TEST-last"), error.URLError("TEST-last"),
+                    error.HTTPError(RH_STANDARD_FALLBACK_URL, 500, "TEST-last", {}, None),
+                    error.HTTPError(RH_STANDARD_FALLBACK_URL, 302, "TEST-redirect", {}, None))
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__), patch("server.request.build_opener") as build:
+                build.return_value.open.side_effect = [error.URLError("TEST-first"), failure]
+                reason = "catalog_redirect_not_allowed" if isinstance(failure, error.HTTPError) and failure.code == 302 else "catalog_read_failed"
+                with self.assertRaisesRegex(ValueError, "^" + reason + "$"):
+                    read_public_catalog("rh.standard")
+                self.assertEqual(build.return_value.open.call_count, 2)
+        for response in (self.response(size=MAX_CATALOG_BYTES + 1, url=RH_STANDARD_FALLBACK_URL),
+                         self.response(url="https://untrusted.invalid")):
+            with patch("server.request.build_opener") as build:
+                build.return_value.open.side_effect = [error.URLError("TEST-first"), response]
+                with self.assertRaises(ValueError):
+                    read_public_catalog("rh.standard")
+                self.assertEqual(build.return_value.open.call_count, 2)
+
+    def test_fallback_does_not_copy_environment_credentials_proxy_or_client_targets(self):
+        environment = {"HTTP_PROXY": "http://untrusted.invalid", "HTTPS_PROXY": "http://untrusted.invalid",
+                       "RUNNINGHUB_API_KEY": "TEST-never-forward", "GITHUB_TOKEN": "TEST-never-forward"}
+        with patch.dict(os.environ, environment), patch("server.request.build_opener") as build:
+            build.return_value.open.side_effect = [error.URLError("TEST-first"), self.response(url=RH_STANDARD_FALLBACK_URL)]
+            read_public_catalog("rh.standard")
+            self.assertEqual(build.call_args.args[0].proxies, {})
+            self.assertIsInstance(build.call_args.args[1], NoRedirect)
+            self.assertEqual(len(build.call_args.args), 2)
+            for call in build.return_value.open.call_args_list:
+                headers = {key.lower(): value for key, value in call.args[0].header_items()}
+                self.assertTrue(set(headers) <= {"accept", "accept-encoding", "user-agent"})
+                self.assertNotIn("TEST-never-forward", headers.values())
+            for source in (RH_STANDARD_FALLBACK_URL, "rh.standard?url=https://untrusted.invalid", "comfy.recipes"):
+                with self.assertRaisesRegex(ValueError, "^unsupported_source$"):
+                    read_public_catalog(source)
+            self.assertEqual(build.return_value.open.call_count, 2)
+
+    def test_llm_transport_failure_still_has_only_one_attempt(self):
+        with patch("server.request.build_opener") as build:
+            build.return_value.open.side_effect = error.URLError("TEST-unavailable")
+            with self.assertRaisesRegex(ValueError, "^catalog_read_failed$"):
+                read_public_catalog("rh.llm")
+            self.assertEqual(build.return_value.open.call_count, 1)
 
 
 if __name__ == "__main__":

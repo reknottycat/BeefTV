@@ -63,6 +63,32 @@ RunningHub sources use fixed anonymous public GETs without keys or cookies.
 Comfy recipe refresh inspects registered node classes, without submitting a
 GPU job or automatically registering every installed checkpoint.
 
+The standard catalog first uses its fixed
+[official raw file](https://raw.githubusercontent.com/HM-RunningHub/OpenClaw_RH_Skills/main/runninghub/data/capabilities.json).
+Only a network/read error or HTTP 5xx permits one attempt at the fixed
+[GitHub REST Contents URL for the same file](https://api.github.com/repos/HM-RunningHub/OpenClaw_RH_Skills/contents/runninghub/data/capabilities.json?ref=main),
+with `Accept: application/vnd.github.raw+json` and
+`User-Agent: BeefTV-read-only-catalog`. HTTP 4xx, redirect, response-size or JSON/schema
+failures do not select this fallback. Each GET retains a 15-second timeout and
+5 MiB response limit; a standard catalog refresh makes at most two GETs. The
+LLM directory retains its single fixed URL. No client URL, key, cookie or proxy
+environment is used, and system proxy, environment and TLS settings are not
+changed.
+
+In this read-only check, Spark's raw request encountered a connection reset
+(error 104). The anonymous REST read returned HTTP 200 and 754082 bytes,
+parsed as 420 entries at version `2026-08-18`. The Web LLM directory showed 80
+entries with a fresh cache. These observations establish public directory
+reads, not a connected account or callable models. Deployment of the new
+reader and its Web refresh require separate acceptance.
+
+The static checker recognizes the observed V3 node schemas: an empty
+`min:0` autogrow input may be omitted, supported single-select `COMBO` values
+are checked, and selected dynamic-combo branches are expanded into fields.
+Unknown or incomplete schemas remain unavailable for verification. The three
+registered Qwen-Image 2.1, H3 I2V and 512 preview recipes passed static checks
+in this round; that does not establish `gpuVerified` or real generation.
+
 Discovery and static checks do not establish account access, billing
 authorization or successful generation. Directory rows do not populate native
 cloud model selectors or take over unified generation dispatch. Registered

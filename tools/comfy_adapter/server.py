@@ -36,6 +36,7 @@ PUBLIC_CATALOG_URLS = {
     "rh.standard": "https://raw.githubusercontent.com/HM-RunningHub/OpenClaw_RH_Skills/main/runninghub/data/capabilities.json",
     "rh.llm": "https://llm.runninghub.ai/v1/models",
 }
+RH_STANDARD_FALLBACK_URL = "https://api.github.com/repos/HM-RunningHub/OpenClaw_RH_Skills/contents/runninghub/data/capabilities.json?ref=main"
 MAX_CATALOG_BYTES = 5 * 1024 * 1024
 
 
@@ -122,27 +123,36 @@ class NoRedirect(request.HTTPRedirectHandler):
 
 
 def read_public_catalog(source):
-    """Only fixed, public HTTPS directories; no environment, auth or redirects."""
+    """Fixed public GETs; only transport failure permits one same-file fallback."""
     if source not in PUBLIC_CATALOG_URLS:
         raise ValueError("unsupported_source")
-    url = PUBLIC_CATALOG_URLS[source]
+    attempts = [(PUBLIC_CATALOG_URLS[source], {"Accept": "application/json", "Accept-Encoding": "identity"})]
+    if source == "rh.standard":
+        attempts.append((RH_STANDARD_FALLBACK_URL, {"Accept": "application/vnd.github.raw+json",
+                                                  "Accept-Encoding": "identity", "User-Agent": "BeefTV-read-only-catalog"}))
     opener = request.build_opener(request.ProxyHandler({}), NoRedirect())
-    req = request.Request(url, headers={"Accept": "application/json", "Accept-Encoding": "identity"}, method="GET")
-    try:
-        response = opener.open(req, timeout=15)
-    except error.HTTPError as exc:
-        exc.close()
-        raise ValueError("catalog_read_failed") from None
-    with response:
-        if response.geturl() != url:
-            raise ValueError("catalog_redirect_not_allowed")
-        declared = response.headers.get("Content-Length")
-        if declared and (not declared.isdigit() or int(declared) > MAX_CATALOG_BYTES):
-            raise ValueError("catalog_response_too_large")
-        raw = response.read(MAX_CATALOG_BYTES + 1)
-        if len(raw) > MAX_CATALOG_BYTES or (declared and len(raw) != int(declared)):
-            raise ValueError("invalid_catalog_size")
-        return raw
+    for index, (url, headers) in enumerate(attempts):
+        req = request.Request(url, headers=headers, method="GET")
+        try:
+            with opener.open(req, timeout=15) as response:
+                if response.geturl() != url:
+                    raise ValueError("catalog_redirect_not_allowed")
+                declared = response.headers.get("Content-Length")
+                if declared and (not declared.isdigit() or int(declared) > MAX_CATALOG_BYTES):
+                    raise ValueError("catalog_response_too_large")
+                raw = response.read(MAX_CATALOG_BYTES + 1)
+                if len(raw) > MAX_CATALOG_BYTES or (declared and len(raw) != int(declared)):
+                    raise ValueError("invalid_catalog_size")
+                return raw
+        except error.HTTPError as exc:
+            exc.close()
+            if 300 <= exc.code < 400:
+                raise ValueError("catalog_redirect_not_allowed") from None
+            if not 500 <= exc.code < 600 or index == len(attempts) - 1:
+                raise ValueError("catalog_read_failed") from None
+        except (error.URLError, OSError):
+            if index == len(attempts) - 1:
+                raise ValueError("catalog_read_failed") from None
 
 
 class ComfyClient:

@@ -258,6 +258,102 @@ def _primitive_issue(value, definition):
     return None, False
 
 
+def _enum_options(definition):
+    """Recognize classic enums and the observed single-select V3 COMBO."""
+    if len(definition) > 2 or (len(definition) == 2 and not isinstance(definition[1], dict)):
+        return None
+    if isinstance(definition[0], list):
+        values = definition[0]
+    elif definition[0] == "COMBO" and len(definition) == 2 and definition[1].get("multiselect") is False:
+        metadata = definition[1]
+        if (set(metadata) - {"multiselect", "options", "tooltip", "default", "advanced"}
+                or ("tooltip" in metadata and not isinstance(metadata["tooltip"], str))
+                or ("advanced" in metadata and type(metadata["advanced"]) is not bool)):
+            return None
+        values = definition[1].get("options")
+    else:
+        return None
+    if (not isinstance(values, list) or len(values) > 10000
+            or any(type(v) not in (str, int, float, bool) or (type(v) in (int, float) and not _finite_number(v)) for v in values)):
+        return None
+    if definition[0] == "COMBO" and "default" in definition[1] and not _in_enum(definition[1]["default"], values):
+        return None
+    return values
+
+
+def _in_enum(value, options):
+    # Python considers True == 1; a serialized choice must also match its type.
+    return any(type(value) is type(choice) and value == choice for choice in options)
+
+
+def _autogrow_minimum(definition):
+    """Only the observed named IMAGE template has known omission semantics."""
+    if (len(definition) != 2 or not isinstance(definition[1], dict)
+            or "template" not in definition[1] or set(definition[1]) - {"template", "tooltip"}
+            or ("tooltip" in definition[1] and not isinstance(definition[1]["tooltip"], str))):
+        return None
+    template = definition[1]["template"]
+    if (not isinstance(template, dict) or set(template) != {"input", "names", "min"}
+            or template["input"] != {"required": {"image": ["IMAGE", {}]}}):
+        return None
+    names, minimum = template["names"], template["min"]
+    if (not isinstance(names, list) or not names or len(names) > 128
+            or any(not isinstance(v, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,119}", v) for v in names)
+            or len(set(names)) != len(names) or type(minimum) is not int or not 0 <= minimum <= len(names)):
+        return None
+    return minimum
+
+
+def _dynamic_inputs(required, optional, inputs, unknown, node_id):
+    """Resolve only selected V3 dynamic combo branches into dotted API fields."""
+    required, optional = dict(required), dict(optional)
+    pending = [(name, definition, 0) for name, definition in {**required, **optional}.items()]
+    enums = {}
+    for field, definition, depth in pending:
+        if not isinstance(definition, list) or not definition or definition[0] != "COMFY_DYNAMICCOMBO_V3":
+            continue
+        valid = (depth < 8 and len(definition) == 2 and isinstance(definition[1], dict)
+                 and not set(definition[1]) - {"options", "display_name", "tooltip", "hidden"}
+                 and all(isinstance(definition[1][key], str) for key in ("display_name", "tooltip") if key in definition[1])
+                 and ("hidden" not in definition[1] or type(definition[1]["hidden"]) is bool)
+                 and isinstance(definition[1].get("options"), list) and len(definition[1]["options"]) <= 500)
+        choices = {}
+        for choice in definition[1]["options"] if valid else ():
+            if (not isinstance(choice, dict) or set(choice) != {"key", "inputs"}
+                    or not isinstance(choice["key"], str) or not choice["key"] or len(choice["key"]) > 120
+                    or choice["key"] in choices or not isinstance(choice["inputs"], dict)
+                    or "required" not in choice["inputs"] or set(choice["inputs"]) - {"required", "optional"}):
+                valid = False
+                break
+            branch = choice["inputs"]
+            if any(not isinstance(branch.get(kind, {}), dict) for kind in ("required", "optional")):
+                valid = False
+                break
+            choices[choice["key"]] = branch
+        if not valid:
+            _issue(unknown, "dynamic_combo_schema_unavailable", node_id, field)
+            continue
+        enums[field] = list(choices)
+        selection = inputs.get(field)
+        if not isinstance(selection, str) or selection not in choices:
+            continue
+        branch = choices[selection]
+        if set(branch.get("required", {})) & set(branch.get("optional", {})):
+            _issue(unknown, "dynamic_combo_schema_unavailable", node_id, field)
+            continue
+        for kind, target in (("required", required), ("optional", optional)):
+            for name, child in branch.get(kind, {}).items():
+                flattened = field + "." + str(name)
+                if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,119}", name)
+                        or flattened in required or flattened in optional or len(required) + len(optional) >= 512
+                        or not isinstance(child, list) or not child):
+                    _issue(unknown, "dynamic_combo_schema_unavailable", node_id, field)
+                    continue
+                target[flattened] = child
+                pending.append((flattened, child, depth + 1))
+    return required, optional, enums
+
+
 def _recipe_checks(recipe, object_info):
     issues, unknown, model_checks = [], [], []
     workflow, bindings = recipe.get("workflow"), recipe.get("bindings")
@@ -325,9 +421,17 @@ def _recipe_checks(recipe, object_info):
         if not isinstance(optional, dict):
             _issue(unknown, "node_schema_unavailable", node_id)
             continue
+        required, optional, dynamic_enums = _dynamic_inputs(required, optional, inputs, unknown, node_id)
         declared = {**required, **optional}
-        for field in required:
+        for field, definition in required.items():
             if field not in inputs:
+                if isinstance(definition, list) and definition and definition[0] == "COMFY_AUTOGROW_V3":
+                    minimum = _autogrow_minimum(definition)
+                    if minimum is None:
+                        _issue(unknown, "autogrow_schema_unavailable", node_id, field)
+                        continue
+                    if minimum == 0:
+                        continue
                 _issue(issues, "missing_required_input", node_id, field)
         for field, value in inputs.items():
             definition = declared.get(field)
@@ -338,17 +442,30 @@ def _recipe_checks(recipe, object_info):
                 continue
             model_field = field in MODEL_FIELDS and any(token in class_name.lower() for token in ("load", "lora", "checkpoint"))
             if model_field:
-                enum = definition[0]
-                matched = isinstance(enum, list) and isinstance(value, str) and value in enum
-                model_checks.append({"nodeId": str(node_id), "input": field, "status": "passed" if matched else "failed" if isinstance(enum, list) else "unavailable"})
-                if not isinstance(enum, list):
+                enum = _enum_options(definition)
+                matched = enum is not None and isinstance(value, str) and _in_enum(value, enum)
+                model_checks.append({"nodeId": str(node_id), "input": field, "status": "passed" if matched else "failed" if enum is not None else "unavailable"})
+                if enum is None:
                     _issue(unknown, "model_enum_unavailable", node_id, field)
                 elif not matched:
                     _issue(issues, "model_not_in_enum", node_id, field)
                 continue
-            if isinstance(definition[0], list):
-                if value not in definition[0]:
+            if definition[0] == "COMFY_DYNAMICCOMBO_V3":
+                if field in dynamic_enums and not _in_enum(value, dynamic_enums[field]):
                     _issue(issues, "parameter_not_in_enum", node_id, field)
+                continue
+            if definition[0] == "COMFY_AUTOGROW_V3":
+                # Present aggregate values need their own link/shape contract;
+                # recognizing min:0 only authorizes omission, not arbitrary data.
+                _issue(unknown, "autogrow_value_schema_unavailable", node_id, field)
+                continue
+            enum = _enum_options(definition)
+            if enum is not None:
+                if not _in_enum(value, enum):
+                    _issue(issues, "parameter_not_in_enum", node_id, field)
+                continue
+            if definition[0] == "COMBO":
+                _issue(unknown, "combo_schema_unavailable", node_id, field)
                 continue
             if isinstance(value, list):
                 if len(value) != 2 or not isinstance(value[0], str) or type(value[1]) is not int:

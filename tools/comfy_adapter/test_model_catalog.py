@@ -46,6 +46,31 @@ def object_info_fixture():
             "LoadImage": {"input": {"required": {"image": [["some-uploaded-image.png"]]}}, "output": ["IMAGE"], "output_node": False}}
 
 
+def autogrow_image_fixture():
+    # TextEncodeQwenImage21 /object_info: the required group permits no images.
+    return ["COMFY_AUTOGROW_V3", {"tooltip": "Reference images, seen by the text encoder and spliced into the sequence as VAE latents.", "template": {
+        "input": {"required": {"image": ["IMAGE", {}]}},
+        "names": ["image_" + str(i) for i in range(1, 17)], "min": 0}}]
+
+
+def dynamic_video_format_fixture():
+    # SaveVideo V3: API fields flatten to format.codec.encoding.crf.
+    def codec_choice(key):
+        branch = {"required": {}}
+        if key != "auto":
+            branch["optional"] = {"encoding": ["COMFY_DYNAMICCOMBO_V3", {
+                "display_name": "encoding mode", "options": [
+                    {"key": "auto", "inputs": {"required": {}}},
+                    {"key": "re-encode", "inputs": {"required": {
+                        "crf": ["FLOAT", {"min": 0.0, "max": 51.0 if key == "h264" else 63.0, "step": 1.0}]}}}]}]}
+        return {"key": key, "inputs": branch}
+
+    return ["COMFY_DYNAMICCOMBO_V3", {"options": [
+        {"key": name, "inputs": {"required": {"codec": ["COMFY_DYNAMICCOMBO_V3", {
+            "options": [codec_choice(key) for key in (["auto", "av1"] if name == "webm" else ["auto", "h264", "av1"])]}]}}}
+        for name in ("auto", "mp4", "mkv", "webm")]}]
+
+
 class RunningHubParserTests(unittest.TestCase):
     def test_string_outputs_are_not_text_or_chat_capabilities(self):
         tasks = ("music-generation", "text-to-speech", "short-play-video", "video-extend", "upload-character", "layer-separation", "text-to-text")
@@ -189,6 +214,162 @@ class ComfyParserTests(unittest.TestCase):
         recipe["workflow"]["3"]["inputs"]["steps"] = value
         info["Sampler"]["input"]["required"]["steps"] = definition
         return recipe, info
+
+    def dynamic_format(self, values):
+        recipe, info = recipe_fixture(), object_info_fixture()
+        info["SaveImage"]["input"]["required"]["format"] = dynamic_video_format_fixture()
+        recipe["workflow"]["4"]["inputs"].update(values)
+        return recipe, info
+
+    def test_live_qwen_autogrow_minimum_zero_authorizes_omission_only(self):
+        recipe, info = recipe_fixture(), object_info_fixture()
+        info["TextPrompt"]["input"]["required"]["images"] = autogrow_image_fixture()
+        row = self.row(recipe, info)
+        self.assertEqual(row["staticChecks"]["objectInfo"], "passed")
+        self.assertFalse(row["gpuVerified"])
+        self.assertFalse(row["ready"])
+        for value in ({}, [], ["3", 0], "unverified aggregate"):
+            with self.subTest(value=value):
+                recipe["workflow"]["1"]["inputs"]["images"] = value
+                self.assertEqual(self.row(recipe, info)["staticChecks"]["objectInfo"], "unavailable")
+
+    def test_autogrow_positive_minimum_keeps_missing_required_check(self):
+        recipe, info = recipe_fixture(), object_info_fixture()
+        definition = autogrow_image_fixture()
+        definition[1]["template"]["min"] = 1
+        info["TextPrompt"]["input"]["required"]["images"] = definition
+        checks = self.row(recipe, info)["staticChecks"]
+        self.assertEqual(checks["objectInfo"], "failed")
+        self.assertIn({"code": "missing_required_input", "nodeId": "1", "input": "images"}, checks["issues"])
+
+    def test_unknown_autogrow_shapes_are_unavailable_not_optional(self):
+        variants = []
+        for change in ({"min": True}, {"min": "0"}, {"min": -1}, {"min": 17}, {"names": []},
+                       {"names": ["same", "same"]}, {"input": {"required": {"image": ["UNKNOWN", {}]}}},
+                       {"extra": "future-version"}):
+            definition = autogrow_image_fixture()
+            definition[1]["template"].update(change)
+            variants.append(definition)
+        variants.extend((["COMFY_AUTOGROW_V3"], ["COMFY_AUTOGROW_V3", None]))
+        for definition in variants:
+            with self.subTest(definition=definition):
+                recipe, info = recipe_fixture(), object_info_fixture()
+                info["TextPrompt"]["input"]["required"]["images"] = definition
+                checks = self.row(recipe, info)["staticChecks"]
+                self.assertEqual(checks["objectInfo"], "unavailable")
+                self.assertIn("autogrow_schema_unavailable", [v["code"] for v in checks["issues"]])
+
+    def test_live_scheduler_and_create_video_combo_choices_validate_exact_types(self):
+        cases = (("simple", ["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"]),
+                 (8, ["auto", 8, 10]), ("sRGB", ["sRGB", "HDR", "HDR PQ"]),
+                 ("none", ["none", "auto", "h264", "av1"]))
+        for valid, choices in cases:
+            for value in (valid, "not-a-choice", True, ["2", 0]):
+                with self.subTest(valid=valid, value=value):
+                    recipe, info = self.fixed_parameter(value, ["COMBO", {"multiselect": False, "options": choices}])
+                    checks = self.row(recipe, info)["staticChecks"]
+                    self.assertEqual(checks["objectInfo"], "passed" if type(value) is type(valid) and value == valid else "failed")
+
+    def test_combo_enum_does_not_equate_booleans_with_integer_choices(self):
+        for definition in (["COMBO", {"multiselect": False, "options": [1]}], [[1]]):
+            recipe, info = self.fixed_parameter(True, definition)
+            self.assertEqual(self.row(recipe, info)["staticChecks"]["objectInfo"], "failed")
+
+    def test_malformed_or_multiselect_combo_schemas_stay_unavailable(self):
+        for definition in (["COMBO"], ["COMBO", {}], ["COMBO", {"multiselect": True, "options": [2]}],
+                           ["COMBO", {"multiselect": False, "options": "2"}],
+                           ["COMBO", {"multiselect": False, "options": [float("inf")]}]):
+            recipe, info = self.fixed_parameter(2, definition)
+            self.assertEqual(_recipe_checks(recipe, info)["objectInfo"], "unavailable")
+
+    def test_combo_unknown_metadata_and_malformed_known_metadata_are_unavailable(self):
+        for change in ({"future_contract": True}, {"tooltip": 7}, {"advanced": "true"}, {"default": "absent"}, {"default": True}):
+            recipe, info = self.fixed_parameter(8, ["COMBO", {"multiselect": False, "options": [8, 10], **change}])
+            self.assertEqual(self.row(recipe, info)["staticChecks"]["objectInfo"], "unavailable")
+        recipe, info = self.fixed_parameter("none", ["COMBO", {"multiselect": False,
+            "options": ["none", "auto", "h264", "av1"], "tooltip": "Optionally encode the video immediately.",
+            "advanced": True, "default": "none"}])
+        self.assertEqual(self.row(recipe, info)["staticChecks"]["objectInfo"], "passed")
+
+    def test_unknown_combo_contract_cannot_pass_as_a_wildcard_or_combo_link(self):
+        definitions = (["COMBO", {"multiselect": False, "options": [8], "future_contract": True}],
+                       ["COMBO", {"multiselect": True, "options": [8]}], ["COMBO", {}])
+        for definition in definitions:
+            for source_type in ("*", "COMBO"):
+                recipe, info = self.fixed_parameter(["6", 0], definition)
+                recipe["workflow"]["6"] = {"class_type": "ComboSource", "inputs": {}}
+                info["ComboSource"] = {"input": {"required": {}}, "output": [source_type], "output_node": False}
+                checks = self.row(recipe, info)["staticChecks"]
+                self.assertEqual(checks["objectInfo"], "unavailable")
+                self.assertIn({"code": "combo_schema_unavailable", "nodeId": "3", "input": "steps"}, checks["issues"])
+
+    def test_model_loader_v3_combo_still_requires_installed_model(self):
+        for selected in ("selected-example.safetensors", "absent.safetensors"):
+            recipe, info = recipe_fixture(), object_info_fixture()
+            recipe["workflow"]["2"]["inputs"]["ckpt_name"] = selected
+            info["CheckpointLoader"]["input"]["required"]["ckpt_name"] = ["COMBO", {
+                "multiselect": False, "options": ["selected-example.safetensors"]}]
+            checks = self.row(recipe, info)["staticChecks"]
+            self.assertEqual(checks["objectInfo"], "passed" if selected == "selected-example.safetensors" else "failed")
+
+    def test_live_save_video_auto_flattened_codec_is_valid(self):
+        recipe, info = self.dynamic_format({"format": "auto", "format.codec": "auto"})
+        checks = self.row(recipe, info)["staticChecks"]
+        self.assertEqual(checks["objectInfo"], "passed")
+        self.assertEqual(checks["issues"], [])
+
+    def test_dynamic_combo_selected_branch_required_child_cannot_be_omitted(self):
+        for values, missing in (({"format": "auto"}, "format.codec"),
+                                ({"format": "mp4", "format.codec": "h264", "format.codec.encoding": "re-encode"}, "format.codec.encoding.crf")):
+            recipe, info = self.dynamic_format(values)
+            checks = self.row(recipe, info)["staticChecks"]
+            self.assertEqual(checks["objectInfo"], "failed")
+            self.assertIn({"code": "missing_required_input", "nodeId": "4", "input": missing}, checks["issues"])
+
+    def test_dynamic_combo_enums_follow_selected_format_not_other_branches(self):
+        for name, codec, expected in (("mp4", "h264", "passed"), ("webm", "h264", "failed"),
+                                      ("webm", "av1", "passed"), ("invalid", "auto", "failed"),
+                                      ("auto", "invalid", "failed")):
+            recipe, info = self.dynamic_format({"format": name, "format.codec": codec})
+            self.assertEqual(self.row(recipe, info)["staticChecks"]["objectInfo"], expected)
+
+    def test_nested_dynamic_combo_literals_keep_type_and_range_validation(self):
+        for value, expected in ((0.0, "passed"), (51.0, "passed"), (51.01, "failed"), (-1.0, "failed"),
+                                (True, "failed"), ("23", "failed")):
+            recipe, info = self.dynamic_format({"format": "mp4", "format.codec": "h264",
+                "format.codec.encoding": "re-encode", "format.codec.encoding.crf": value})
+            self.assertEqual(self.row(recipe, info)["staticChecks"]["objectInfo"], expected)
+
+    def test_unknown_dynamic_combo_shapes_do_not_report_static_success(self):
+        variants = (["COMFY_DYNAMICCOMBO_V3"], ["COMFY_DYNAMICCOMBO_V3", {"options": {}}],
+                    ["COMFY_DYNAMICCOMBO_V3", {"options": [{"key": "auto", "inputs": {}}]}],
+                    ["COMFY_DYNAMICCOMBO_V3", {"options": [{"key": "auto", "inputs": {"required": []}}]}],
+                    ["COMFY_DYNAMICCOMBO_V3", {"options": [{"key": "auto", "inputs": {"required": {}}}] * 2}],
+                    ["COMFY_DYNAMICCOMBO_V3", {"options": [{"key": "auto", "inputs": {"required": {}}}], "flatten": False}],
+                    ["COMFY_DYNAMICCOMBO_V3", {"options": [{"key": "auto", "inputs": {"required": {}}}], "hidden": "true"}],
+                    ["COMFY_DYNAMICCOMBO_V3", {"options": [{"key": "auto", "inputs": {"required": {"codec": None}}}]}])
+        for definition in variants:
+            recipe, info = self.dynamic_format({"format": "auto"})
+            info["SaveImage"]["input"]["required"]["format"] = definition
+            checks = self.row(recipe, info)["staticChecks"]
+            self.assertEqual(checks["objectInfo"], "unavailable")
+            self.assertIn("dynamic_combo_schema_unavailable", [v["code"] for v in checks["issues"]])
+
+    def test_inactive_dynamic_branch_dotted_field_is_not_accepted(self):
+        recipe, info = self.dynamic_format({"format": "auto", "format.codec": "auto", "format.codec.encoding.crf": 23})
+        checks = self.row(recipe, info)["staticChecks"]
+        self.assertEqual(checks["objectInfo"], "unavailable")
+        self.assertIn({"code": "input_schema_unavailable", "nodeId": "4", "input": "format.codec.encoding.crf"}, checks["issues"])
+
+    def test_dynamic_combo_expansion_has_a_bounded_nesting_depth(self):
+        definition = ["COMFY_DYNAMICCOMBO_V3", {"options": [{"key": "auto", "inputs": {"required": {}}}]}]
+        for _ in range(10):
+            definition = ["COMFY_DYNAMICCOMBO_V3", {"options": [{"key": "auto", "inputs": {"required": {"child": definition}}}]}]
+        recipe, info = self.dynamic_format({"format" + ".child" * depth: "auto" for depth in range(11)})
+        info["SaveImage"]["input"]["required"]["format"] = definition
+        checks = self.row(recipe, info)["staticChecks"]
+        self.assertEqual(checks["objectInfo"], "unavailable")
+        self.assertIn("dynamic_combo_schema_unavailable", [v["code"] for v in checks["issues"]])
 
     def test_fixed_primitive_types_fail_instead_of_reporting_static_success(self):
         cases = (("INT", [1, 10], ["TEST-not-an-integer", True, 1.5, None, {}]),

@@ -49,14 +49,20 @@ DeepSeek 使用显式根前缀，对应官方文档的 `/chat/completions` 端�
 | `rh.standard` | RunningHub 官方标准端点目录快照，保留来源版本、任务和输出类型。 |
 | `rh.llm` | RunningHub 公开 LLM 目录及其公开元数据。 |
 
-RunningHub 发现只使用以下两个固定、匿名的 HTTPS GET 来源：
+RunningHub 发现使用以下两个固定、匿名的 HTTPS GET 首选来源：
 
 - [官方标准目录快照](https://raw.githubusercontent.com/HM-RunningHub/OpenClaw_RH_Skills/main/runninghub/data/capabilities.json)。
 - [公开 LLM 目录](https://llm.runninghub.ai/v1/models)。
 
-读取时不附加认证或 Cookie、不加载环境变量中的密钥、不跟随重定向，也不接受用户指定的目标地址。标准目录的 `string` 输出可能是结构化数据或媒体地址，不能全部认定为文本生成模型。实际 LLM 调用需要另外配置适合该账户的密钥，公开目录读取不进行这种调用。
+标准目录优先读取固定 raw 地址。仅首选地址发生网络/读取异常或 HTTP 5xx 时，读取器才最多尝试一次[同一官方文件的 GitHub REST Contents 地址](https://api.github.com/repos/HM-RunningHub/OpenClaw_RH_Skills/contents/runninghub/data/capabilities.json?ref=main)，使用 `Accept: application/vnd.github.raw+json` 和 `User-Agent: BeefTV-read-only-catalog`。这不是新目录来源，也不是任意镜像或用户 URL。HTTP 4xx、重定向、大小校验或 JSON/schema 失败不会触发备用读取；备用失败后没有第三次请求。每次 GET 保持 15 秒超时和 5 MiB 响应上限，一次标准目录刷新最多两次 GET；LLM 目录仍只有一个固定地址。
+
+读取时不附加认证或 Cookie、不加载环境变量中的密钥、不跟随重定向，也不接受用户指定的目标地址。读取器不使用代理环境配置，不修改系统代理、环境变量或 TLS 校验。标准目录的 `string` 输出可能是结构化数据或媒体地址，不能全部认定为文本生成模型。实际 LLM 调用需要另外配置适合该账户的密钥，公开目录读取不进行这种调用。
+
+本轮只读核验中，Spark 的 raw 读取出现连接重置（错误 104）；同一官方文件的备用匿名 GET 返回 HTTP 200、754082 字节，解析为 420 项、版本 `2026-08-18`。Web 的公开 LLM 目录观察到 80 项且缓存为 `fresh`。这些是本轮目录读取观察，不表示账户已连接、模型可调用或计费已授权；新 reader 的部署与 Web 刷新需单独验收。
 
 `GET /api/local-comfy/v1/model-catalog` 只读内存缓存。刷新某个来源需要显式 `POST /api/local-comfy/v1/model-catalog/refresh` 并提交 `{source}`，沿用现有同 origin JSON 写入校验。来源版本、抓取时间、陈旧状态和读取错误描述目录新鲜度，不代表账户健康状态。
+
+Comfy 静态检查兼容本轮实际 `/object_info` 的 V3 schema：`min:0` autogrow 可以省略空输入，支持已识别的单选 `COMBO`，并按选中的 dynamic combo 分支展开字段进行校验；未知或不完整 schema 仍标记为不可核验，不放宽任意参数。本轮实际登记的 Qwen-Image 2.1、H3 I2V 四步和 512 预览三个配方通过静态检查，仍不等于 `gpuVerified` 或真实生成验收。
 
 目录响应明确为只读、仅目录，`generationEnabled:false`。发现条目、配方静态检查和已安装权重均不证明 GPU 执行成功、账户可用或计费授权。目录行不会直接填入原生云渠道的默认模型选择，也不接管原生统一生成调度。已登记配方可通过下面的独立本地默认配置使用。社区 AI 应用、手工工作流 ID 导入和权重/资源列表是另外的未接通能力，目录不宣称枚举用户的全部应用或工作流。
 
@@ -83,4 +89,4 @@ type LocalComfyDefaults = Partial<Record<"image" | "video", {
 
 ## 验证结果的边界
 
-配置持久化、目录发现、mock 请求行为、带认证的提供商连接和真实生成分别需要证据。本页说明连接合同，不是测试报告。表单保存成功不证明连接可用；mock 响应不证明账户权限、GPU 执行、模型质量或付费服务结果。实际检查及其限制应记录在交付证据中，不记录密钥、私有路径或含凭据的 URL。
+配置持久化、目录发现、mock 请求行为、带认证的提供商连接和真实生成分别需要证据。本页的合同与只读目录观察不能代替功能或质量验收报告。表单保存成功不证明连接可用；mock 响应不证明账户权限、GPU 执行、模型质量或付费服务结果。实际检查及其限制应记录在交付证据中，不记录密钥、私有路径或含凭据的 URL。
