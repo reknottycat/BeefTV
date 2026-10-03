@@ -275,6 +275,22 @@ export function resolveModelGenerationDefaults(
     const source = (key: keyof ModelGenerationDefaults) => explicit[key] ?? (isManagedModel || hasModelCapabilityProfile ? undefined : fallback[key]);
     const capabilityProfile = modelCapabilityConfigFor(config, model);
 
+    if (isLocalComfyModel(model)) {
+        if (capability === "image" && capabilityProfile.image) return {
+            size: capabilityProfile.image.size.default,
+            quality: capabilityProfile.image.quality.default,
+            count: "1",
+            transparentBackground: "false",
+        };
+        if (capability === "video" && capabilityProfile.video) return {
+            videoSeconds: String(capabilityProfile.video.duration.default),
+            size: capabilityProfile.video.defaultRatio,
+            vquality: capabilityProfile.video.defaultResolution.replace(/p$/i, ""),
+            videoGenerateAudio: "false",
+            videoWatermark: "false",
+        };
+    }
+
     if (capability === "image" && capabilityProfile.image) {
         const normalized = normalizeImageValue(capabilityProfile.image, {
             size: source("size"),

@@ -90,5 +90,7 @@ describe("native model selection and hydration with local recipes", () => {
     test("new native nodes use fixed recipe parameters rather than persisted cloud defaults", () => {
         expect(resolveModelGenerationDefaults(config, image, "image", {}, { size: "16:9", count: "4" })).toMatchObject({ size: "1024x1024", count: "1", quality: "auto" });
         expect(resolveModelGenerationDefaults(config, video, "video", {}, { videoSeconds: "30", size: "16:9", vquality: "1080" })).toMatchObject({ videoSeconds: String(124 / 24), size: "864x480", vquality: "480", videoGenerateAudio: "false" });
+        expect(resolveModelGenerationDefaults(config, image, "image", { size: "16:9", count: "4", quality: "high", transparentBackground: "true" })).toMatchObject({ size: "1024x1024", count: "1", quality: "auto", transparentBackground: "false" });
+        expect(resolveModelGenerationDefaults(config, video, "video", { videoSeconds: "30", size: "16:9", vquality: "1080", videoGenerateAudio: "true", videoWatermark: "true" })).toMatchObject({ videoSeconds: String(124 / 24), size: "864x480", vquality: "480", videoGenerateAudio: "false", videoWatermark: "false" });
     });
 });
