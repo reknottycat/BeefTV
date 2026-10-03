@@ -3,17 +3,19 @@ import { Pencil, Plus, RefreshCw, Trash2, Workflow } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
+import { ModelConfigSaveFeedback } from "@/components/model-config-save-feedback";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
+import { awaitModelConfigSaved, manualChannelModelPatch } from "@/lib/channel-settings-actions";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
 import { channelHasGenerationCredential, channelHasManagedBeefAPICredential, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefAPIChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { localWorkspaceConfig } from "@/lib/user-session";
 import { getLocalModelConfig } from "@/services/api/workspace";
-import { getModelConfigPersistenceState, subscribeModelConfigPersistence, type ModelConfigPersistenceState } from "@/services/model-config-repository";
+import { flushModelConfig, getModelConfigPersistenceState, subscribeModelConfigPersistence, type ModelConfigPersistenceState } from "@/services/model-config-repository";
 import { beefAPIConnectionLabel, cancelBeefAPIConnection, disconnectBeefAPIConnection, getBeefAPIConnection, openBeefAPIWallet, startBeefAPIConnection, type BeefAPIConnectionSummary } from "@/services/api/beefapi-connection";
 
 type UserChannelConnection = "openai" | "gemini";
@@ -31,6 +33,10 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
     const [loadingChannelIds, setLoadingChannelIds] = useState<string[]>([]);
     const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
+    const [manualModel, setManualModel] = useState("");
+    const [manualCapability, setManualCapability] = useState<"text" | "image" | "video" | "audio">("text");
+    const [manualModelError, setManualModelError] = useState("");
+    const [savingEditor, setSavingEditor] = useState(false);
     const [beefConnection, setBeefConnection] = useState<BeefAPIConnectionSummary | null>(null);
     const [beefBusy, setBeefBusy] = useState(false);
 
@@ -131,11 +137,35 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
         updateChannels([...config.channels, channel]);
         setNewChannelId(channel.id);
         setEditingChannelId(channel.id);
+        setManualModel("");
+        setManualCapability("text");
+        setManualModelError("");
     };
 
-    const closeChannelEditor = () => {
-        setEditingChannelId(null);
-        setNewChannelId(null);
+    const closeChannelEditor = async () => {
+        if (savingEditor) return;
+        setSavingEditor(true);
+        try {
+            await awaitModelConfigSaved(flushModelConfig, getModelConfigPersistenceState);
+            setEditingChannelId(null);
+            setNewChannelId(null);
+            setManualModelError("");
+        } catch {
+            message.error("配置尚未保存，编辑内容已保留。请重试保存后再完成。");
+        } finally {
+            setSavingEditor(false);
+        }
+    };
+
+    const addManualModel = (channel: ModelChannel) => {
+        try {
+            updateChannel(channel.id, manualChannelModelPatch(channel, manualModel, manualCapability));
+            setManualModel("");
+            setManualModelError("");
+        } catch (error) {
+            setManualModelError(error instanceof Error ? error.message : "添加模型失败，请检查模型 ID");
+            document.getElementById(`channel-${channel.id}-manual-model`)?.focus();
+        }
     };
 
     const deleteChannel = (id: string) => {
@@ -238,7 +268,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
     };
 
     return (
-        <Form layout="vertical" requiredMark={false}>
+        <Form layout="vertical" requiredMark={false} noValidate>
             <div className="settings-pane-header">
                 <div className="min-w-0">
                     <h2>{localMode ? "本地模型渠道" : "个人渠道"}</h2>
@@ -252,6 +282,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                     </Button>
                 </div>
             </div>
+            <div className="mb-3"><ModelConfigSaveFeedback /></div>
             {onOpenRunningHub ? (
                 <section className="settings-section mb-3">
                     <div className="mb-3">
@@ -285,7 +316,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                             {channel.name || "未命名渠道"}
                                         </h3>
                                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground/55">
-                                            {channelProtocolLabel(channel)} · 已保存 {channel.models.length} 个模型
+                                            {channelProtocolLabel(channel)} · 已配置 {channel.models.length} 个模型
                                             {builtinBeefAPI ? <span>应用内置适配 · v{channel.presetVersion}</span> : null}
                                             <ChannelStatus channel={channel} persistence={persistence} connection={builtinBeefAPI ? beefConnection : null} />
                                         </div>
@@ -320,6 +351,9 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                             onClick={() => {
                                                 setNewChannelId(null);
                                                 setEditingChannelId(channel.id);
+                                                setManualModel("");
+                                                setManualCapability("text");
+                                                setManualModelError("");
                                             }}
                                         >
                                             编辑
@@ -346,20 +380,21 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                         open
                                         title={channel.id === newChannelId ? "新增自定义渠道" : "编辑自定义渠道"}
                                         subtitle={channel.name}
-                                        onClose={closeChannelEditor}
+                                        busy={savingEditor}
+                                        onClose={() => void closeChannelEditor()}
                                         footer={
                                             <div className="model-editor-footer">
-                                                <span className="text-xs text-foreground/50">{localMode ? "更改实时保存到本地工作区" : "更改实时保存到云端渠道配置"}</span>
+                                                <ModelConfigSaveFeedback />
                                                 <div className="model-editor-footer-actions">
                                                     <Button loading={loadingChannelIds.includes(channel.id)} onClick={() => void refreshChannelModels(channel)}>
                                                         拉取模型
                                                     </Button>
-                                                    <Button onClick={closeChannelEditor}>完成</Button>
+                                                    <Button loading={savingEditor} onClick={() => void closeChannelEditor()}>完成</Button>
                                                 </div>
                                             </div>
                                         }
                                     >
-                                        <div className="model-editor-panel">
+                                        <div className="model-editor-panel" inert={savingEditor}>
                                             <section className="model-editor-section">
                                                 <div>
                                                     <h2>连接信息</h2>
@@ -436,17 +471,27 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                             <section className="model-editor-section">
                                                 <div>
                                                     <h2>模型与能力</h2>
-                                                    <p className="mt-1 text-xs text-foreground/50">维护渠道模型，并在单个模型中配置调用协议、能力和定价。</p>
-                                                </div>
-                                                <Form.Item label="模型列表" htmlFor={`channel-${channel.id}-models`} className="mb-0">
-                                                    <Select
+                                                <p className="mt-1 text-xs text-foreground/50">按服务商提供的模型 ID 手动添加，并配置用途、调用协议和参数能力。</p>
+                                            </div>
+                                            <div className="grid items-start gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_auto]">
+                                                <Form.Item label="模型 ID" htmlFor={`channel-${channel.id}-manual-model`} className="mb-0" validateStatus={manualModelError ? "error" : undefined} help={manualModelError || "填写服务商要求的原始模型 ID"}>
+                                                    <Input id={`channel-${channel.id}-manual-model`} value={manualModel} placeholder="例如 gpt-4.1-mini" aria-invalid={Boolean(manualModelError)} aria-describedby={`channel-${channel.id}-manual-help`} onChange={(event) => { setManualModel(event.target.value); setManualModelError(""); }} onPressEnter={(event) => { if (event.nativeEvent.isComposing) return; event.preventDefault(); addManualModel(channel); }} />
+                                                    <span id={`channel-${channel.id}-manual-help`} className="sr-only">{manualModelError || "填写服务商要求的原始模型 ID"}</span>
+                                                </Form.Item>
+                                                <Form.Item label="模型用途" htmlFor={`channel-${channel.id}-manual-capability`} className="mb-0">
+                                                    <Select id={`channel-${channel.id}-manual-capability`} value={manualCapability} options={[{ label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]} onChange={setManualCapability} />
+                                                </Form.Item>
+                                                <div className="sm:pt-7"><Button icon={<Plus className="size-3.5" />} onClick={() => addManualModel(channel)}>手动添加模型</Button></div>
+                                            </div>
+                                            <Form.Item label="模型列表" htmlFor={`channel-${channel.id}-models`} className="mb-0">
+                                                <Select
                                                         id={`channel-${channel.id}-models`}
                                                         mode="tags"
                                                         showSearch
                                                         allowClear
                                                         maxTagCount="responsive"
                                                         tokenSeparators={[",", "\n"]}
-                                                        placeholder="输入模型名，或点击拉取模型"
+                                                    placeholder="也可在这里输入模型 ID，按回车添加；支持逗号或换行分隔"
                                                         value={channel.models}
                                                         onChange={(models) => updateChannel(channel.id, { models: uniqueModels(models) })}
                                                     />
@@ -525,9 +570,9 @@ function ChannelStatus({ channel, persistence, connection }: { channel: ModelCha
     const error = channelValidationError(channel, connection);
     const label = modelConfigChannelStatusLabel(channel, persistence, connection);
     return (
-        <span className={`settings-channel-status ${error ? "is-warning" : "is-ready"}`}>
+        <span className={`settings-channel-status ${error || (!isBuiltinBeefAPIChannel(channel) && persistence.status === "error") ? "is-warning" : "is-ready"}`}>
             <i aria-hidden="true" />
-            {isBuiltinBeefAPIChannel(channel) ? label : error || "可用"}
+            {isBuiltinBeefAPIChannel(channel) ? label : error || `${label} · 连接未验证`}
         </span>
     );
 }
@@ -580,8 +625,9 @@ export function modelConfigChannelStatusLabel(channel: ModelChannel, persistence
     if (!channelHasGenerationCredential(channel)) return "待配置";
     if (persistence.status === "saving") return "保存中";
     if (persistence.status === "error") return "保存失败";
+    if (persistence.dirty) return "待保存";
     if (persistence.status === "saved") return "已保存";
-    return "可用";
+    return "已配置";
 }
 
 function BeefAPIConnectionActions({

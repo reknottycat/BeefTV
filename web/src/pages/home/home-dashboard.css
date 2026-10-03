@@ -34,6 +34,7 @@ body .app-user-workspace .app-workspace-sidebar-nav { background: var(--user-pag
 .beeftv-capability strong { width:100%; font-size:14px; line-height:22px; font-weight:400; }
 .beeftv-capability:hover .beeftv-capability-icon { transform: translateY(-3px); border-color: rgba(34,211,238,.22); background: var(--user-surface-hover); }
 .beeftv-capability.is-disabled { color: var(--user-ink-soft); cursor: not-allowed; }
+.beeftv-capability.is-disabled small { color: var(--user-ink-muted); font-size: var(--fs-caption, 12px); line-height: 18px; }
 .beeftv-capability.is-disabled .beeftv-capability-icon { background: var(--user-surface-muted); box-shadow: 0 0 0 1px rgba(255,255,255,.02); }
 .beeftv-capability.is-disabled .beeftv-capability-icon svg { color: var(--user-ink-soft); }
 .beeftv-capability.is-disabled:hover .beeftv-capability-icon { transform: none; border-color: transparent; background: var(--user-surface-muted); }

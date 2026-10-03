@@ -1,6 +1,7 @@
 import type { Asset } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { http, compactApiParams } from "@/services/api/request";
+import type { BackendAssetPage, BackendAssetPageOptions } from "@/services/workspace-asset-backend";
 
 export type AssetFolder = {
     id: string;
@@ -44,6 +45,25 @@ export function moveAssetsToFolder(assetIds: string[], folderId = "") {
 
 export function getWorkspaceAsset(id: string) {
     return http.get<{ asset: Asset }>(`/assets/${encodeURIComponent(id)}`);
+}
+
+export function listWorkspaceAssetsPage(options: BackendAssetPageOptions) {
+    return http.get<BackendAssetPage>("/assets", {
+        signal: options.signal,
+        params: compactApiParams({ page: options.page, pageSize: options.pageSize, kind: options.kind, category: options.category, folderId: options.folderId, uncategorized: options.uncategorized ? "1" : undefined, status: options.status, q: options.query }),
+    });
+}
+
+export function putWorkspaceAsset(asset: Asset, signal?: AbortSignal) {
+    return http.put<{ asset: { id: string } }>(`/assets/${encodeURIComponent(asset.id)}`, { asset }, { signal });
+}
+
+export function getWorkspaceAssetsByIds(ids: string[], signal?: AbortSignal) {
+    return http.post<{ assets: Asset[] }>("/assets/batch", { ids }, { signal });
+}
+
+export function deleteOwnedWorkspaceAsset(id: string) {
+    return http.delete<{ id: string }>(`/assets/${encodeURIComponent(id)}`);
 }
 
 export type CanvasHistoryEntry = {

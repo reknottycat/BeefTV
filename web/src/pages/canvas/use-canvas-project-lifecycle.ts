@@ -389,8 +389,9 @@ export function useCanvasProjectLifecycle({
     const saveCanvasProject = useCallback(async (options: { requireRemote?: boolean } = {}): Promise<boolean> => {
         try {
             await persistLocalEdits();
-        } catch {
-            message.error("画布保存失败，请稍后重试");
+        } catch (error) {
+            const detail = error instanceof Error && error.message.trim() ? error.message : "未知错误";
+            message.error(`画布未保存到工作区：${detail}。请保留当前页面后重试。`);
             return false;
         }
         if (!hasRemoteUserDataSyncSession()) {

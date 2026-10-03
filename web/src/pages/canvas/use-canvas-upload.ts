@@ -16,6 +16,9 @@ import { fitNodeSize, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size"
 import { CANVAS_UPLOAD_ACCEPT, createFileUploadPlaceholder, uploadNodeType, uploadPercent } from "@/lib/canvas/canvas-file-upload";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { http } from "@/services/api/request";
+import { loadAssetsForUse } from "@/services/local-workspace-sync";
+import { persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
+import { requiresBackendLocalResourceStore } from "@/services/workspace-resource-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { getProjectUnit } from "@/services/api/projects";
@@ -714,7 +717,10 @@ export function useCanvasUpload({
             const id = `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
             return { id, type: CanvasNodeType.Video, title: payload.title, position: { x: center.x - size.width / 2, y: center.y - size.height / 2 }, width: size.width, height: size.height, metadata: mediaResultMetadata("library", { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height, durationMs: payload.durationMs, hasAudio: payload.hasAudio, bytes: payload.bytes, mimeType: payload.mimeType || "video/mp4", assetId: payload.assetId }) } satisfies CanvasNodeData;
         }
-        const storedImage = payload.url
+        const promoteSelectedImage = requiresBackendLocalResourceStore() && !payload.url && !resourceIdFromStorageKey(payload.storageKey || "");
+        const storedImage = promoteSelectedImage
+            ? await uploadImage(await resolveImageUrl(payload.storageKey, payload.dataUrl))
+            : payload.url
             ? { url: payload.url, storageKey: undefined, width: payload.width || 1, height: payload.height || 1, bytes: payload.bytes || 0, mimeType: payload.mimeType || "image/png" }
             : payload.storageKey
                 ? { url: payload.dataUrl, storageKey: payload.storageKey, width: payload.width || 1, height: payload.height || 1, bytes: payload.bytes || 0, mimeType: payload.mimeType || "image/png" }
@@ -730,10 +736,35 @@ export function useCanvasUpload({
 
     const insertAssetPayloads = useCallback(async (payloads: InsertAssetPayload[], origin: Position, successMessage: string, failureMessage: string): Promise<CanvasNodeData[]> => {
         try {
+            const backendAssets = requiresBackendLocalResourceStore();
+            const selectedIds = backendAssets ? payloads.filter((payload) => payload.kind !== "character" && payload.assetId && !payload.assetId.startsWith("external:")).map((payload) => payload.assetId!) : [];
+            const cachedIds = new Set(useAssetStore.getState().assets.map((asset) => asset.id));
+            const missingIds = selectedIds.filter((id) => !cachedIds.has(id));
+            if (missingIds.length) await loadAssetsForUse(missingIds);
             const created = await Promise.all(payloads.map((payload, index) => createAssetPayloadNode(payload, {
                 x: origin.x + (index % BATCH_UPLOAD_COLUMNS) * BATCH_UPLOAD_COLUMN_GAP,
                 y: origin.y + Math.floor(index / BATCH_UPLOAD_COLUMNS) * BATCH_UPLOAD_ROW_GAP,
             })));
+            if (backendAssets && selectedIds.length) {
+                for (const [index, payload] of payloads.entries()) {
+                    if (!payload.assetId || !selectedIds.includes(payload.assetId)) continue;
+                    const asset = useAssetStore.getState().assets.find((item) => item.id === payload.assetId);
+                    if (!asset) throw new Error("所选素材已不存在，请重新选择");
+                    const metadata = created[index].metadata;
+                    if (asset.kind === "image") {
+                        if (!metadata?.storageKey || !resourceIdFromStorageKey(metadata.storageKey)) throw new Error("所选图片尚未登记到本机后端，请重新上传后再插入");
+                        const content = typeof metadata.content === "string" ? metadata.content : asset.data.dataUrl;
+                        useAssetStore.getState().updateAsset(asset.id, {
+                            coverUrl: content,
+                            data: { ...asset.data, dataUrl: content, storageKey: metadata.storageKey, width: metadata.naturalWidth ?? asset.data.width, height: metadata.naturalHeight ?? asset.data.height, bytes: metadata.bytes ?? asset.data.bytes, mimeType: metadata.mimeType ?? asset.data.mimeType },
+                        });
+                    } else if ((asset.kind === "video" || asset.kind === "audio") && (!metadata?.storageKey || !resourceIdFromStorageKey(metadata.storageKey))) {
+                        throw new Error("所选音视频尚未登记到本机后端，请重新上传后再插入");
+                    }
+                }
+                // Register only the selected assets before a canvas can reference them.
+                await persistWorkspaceAssetChanges(selectedIds);
+            }
             setNodes((current) => [...current, ...created]);
             setSelectedNodeIds(new Set(created.map((node) => node.id)));
             setSelectedConnectionId(null);

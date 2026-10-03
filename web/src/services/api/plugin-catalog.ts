@@ -49,6 +49,8 @@ const BUILTIN_OPENAI_PROTOCOLS: ModelProtocolDefinition[] = [
     { value: "openai-response", label: "OpenAI Responses", vendor: "OpenAI", capability: "text", create: "POST /v1/responses", contentType: "application/json", media: "内置协议", enabled: true },
     { value: "openai-image", label: "OpenAI Images", vendor: "OpenAI", capability: "image", create: "POST /v1/images/generations", contentType: "application/json", media: "内置协议", enabled: true },
     { value: "newapi", label: "OpenAI Videos", vendor: "OpenAI compatible", capability: "video", create: "POST /v1/videos", poll: "GET /v1/videos/{task_id}", contentType: "multipart/form-data", media: "内置协议", enabled: true },
+    { value: "newapi-channel-2", label: "NewAPI Video Generations", vendor: "OpenAI compatible", capability: "video", create: "POST /v1/video/generations", poll: "GET /v1/video/generations/{task_id}", contentType: "application/json", media: "内置协议", enabled: true },
+    { value: "openai-audio", label: "OpenAI Audio Speech", vendor: "OpenAI", capability: "audio", create: "POST /v1/audio/speech", contentType: "application/json", media: "内置协议", enabled: true },
 ];
 
 function toProviderDefinition(item: PluginProviderCatalogItem): ModelProtocolDefinition {

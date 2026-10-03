@@ -3,6 +3,7 @@ import { App, Button, Segmented, Tag } from "antd";
 import { ChevronRight, FlaskConical, Settings2 } from "lucide-react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
+import { ModelConfigSaveFeedback } from "@/components/model-config-save-feedback";
 import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
 import { testChannelModelConnection } from "@/lib/model-connection-test";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
@@ -10,6 +11,8 @@ import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol, type ModelProtocolDefinition } from "@/lib/model-protocols";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
+import { awaitModelConfigSaved } from "@/lib/channel-settings-actions";
+import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
 import { modelOptionName, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
@@ -21,6 +24,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     const [protocolLoading, setProtocolLoading] = useState(true);
     const [protocolError, setProtocolError] = useState("");
     const [activeModel, setActiveModel] = useState<string | null>(null);
+    const [savingEditor, setSavingEditor] = useState(false);
     const [availableProtocols, setAvailableProtocols] = useState<ModelProtocolDefinition[]>([]);
 
     useEffect(() => {
@@ -55,6 +59,19 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
             message.error(error instanceof Error ? error.message : "模型测试失败");
         } finally {
             setTestingModel("");
+        }
+    };
+
+    const closeEditor = async () => {
+        if (savingEditor || testingModel) return;
+        setSavingEditor(true);
+        try {
+            await awaitModelConfigSaved(flushModelConfig, getModelConfigPersistenceState);
+            setActiveModel(null);
+        } catch {
+            message.error("模型用途与协议尚未保存，编辑内容已保留。请重试保存后再完成。");
+        } finally {
+            setSavingEditor(false);
         }
     };
 
@@ -106,25 +123,25 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
             </div>
             <ModelEditorModal
                 open={Boolean(activeModel)}
-                busy={Boolean(testingModel)}
+                busy={Boolean(testingModel) || savingEditor}
                 title="编辑模型使用配置"
                 subtitle={activeModel || ""}
                 activeKey={editorTab}
                 onTabChange={setEditorTab}
-                onClose={() => setActiveModel(null)}
+                onClose={() => void closeEditor()}
                 footer={
                     <div className="model-editor-footer">
-                        <span className="text-xs text-foreground/50">更改实时保存到本地工作区</span>
+                        <ModelConfigSaveFeedback />
                         <div className="model-editor-footer-actions">
                             <Button
                                 icon={<FlaskConical className="size-4" />}
                                 loading={Boolean(testingModel)}
-                                disabled={!activeProtocol || protocolLoading || Boolean(protocolError)}
+                                disabled={savingEditor || !activeProtocol || protocolLoading || Boolean(protocolError)}
                                 onClick={() => { if (activeModel && activeProtocol) void testModel(activeModel, activeCapability, activeProtocol); }}
                             >
                                 测试模型
                             </Button>
-                            <Button disabled={Boolean(testingModel)} onClick={() => setActiveModel(null)}>完成</Button>
+                            <Button loading={savingEditor} disabled={Boolean(testingModel)} onClick={() => void closeEditor()}>完成</Button>
                         </div>
                     </div>
                 }
@@ -132,7 +149,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                     {
                         key: "protocol",
                         label: "基本信息",
-                        children: <div className="space-y-4" inert={Boolean(testingModel)}>
+                        children: <div className="space-y-4" inert={Boolean(testingModel) || savingEditor}>
                             <section className="space-y-2">
                                 <div className="text-xs font-medium">模型能力</div>
                                 <Segmented<ModelCapabilityChoice>
@@ -168,7 +185,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                     {
                         key: "capabilities",
                         label: "能力与参数",
-                        children: <div inert={Boolean(testingModel)}>
+                        children: <div inert={Boolean(testingModel) || savingEditor}>
                             {activeCapability === "image" || activeCapability === "video" ? (
                                 <ModelCapabilityEditor
                                     capability={activeCapability}

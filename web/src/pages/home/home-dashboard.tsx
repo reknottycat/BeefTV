@@ -29,6 +29,7 @@ export function HomeDashboard({ projects, loading, error, onRetry }: { projects:
                         <span key={id} className="beeftv-capability is-disabled" aria-disabled="true" title={`${label}：${detail}`}>
                             <span className="beeftv-capability-icon"><Icon /></span>
                             <strong>{label}</strong>
+                            <small>{detail}</small>
                         </span>
                     ) : (
                         <Link key={id} to={to} className="beeftv-capability">

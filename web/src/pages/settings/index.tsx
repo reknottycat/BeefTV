@@ -3,10 +3,13 @@ import { ArrowLeft, RadioTower } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { isBuiltinBeefAPIChannel, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { awaitModelConfigSaved } from "@/lib/channel-settings-actions";
+import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
 import { useUserStore } from "@/stores/use-user-store";
 import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, isChannelReady } from "./channel-settings-pane";
 import { ModelDefaultGrid } from "./model-default-grid";
+import { LocalComfySettingsPane } from "./local-comfy-settings-pane";
 
 type ConfigSectionKey = "channels" | "models";
 
@@ -30,6 +33,7 @@ export default function SettingsPage() {
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const shouldPromptContinue = searchParams.get("continue") === "1";
+    const [savingReturn, setSavingReturn] = useState(false);
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
     const visibleConfigSections = useMemo(() => customChannelsEnabled ? configSections : configSections.filter((section) => section.key !== "channels"), [customChannelsEnabled]);
 
@@ -55,26 +59,31 @@ export default function SettingsPage() {
         setSearchParams(next, { replace: true });
     };
 
-    const finishConfig = () => {
-        const invalidChannel = customChannelsEnabled ? userChannels.find((channel) => channelValidationError(channel)) : undefined;
-        if (invalidChannel) {
+    const returnToCreation = async (requireReady: boolean) => {
+        if (savingReturn) return;
+        if (requireReady && !effectiveConfig.channels.some((channel) => channel.enabled !== false && isChannelReady(channel))) {
             selectSection("channels");
-            message.warning(`${invalidChannel.name || "未命名渠道"}：${channelValidationError(invalidChannel)}`);
-            focusInvalidChannelField(invalidChannel);
+            const invalidChannel = userChannels.find((channel) => !isBuiltinBeefAPIChannel(channel) && channelValidationError(channel));
+            message.error(customChannelsEnabled ? (invalidChannel ? `${invalidChannel.name || "未命名渠道"}：${channelValidationError(invalidChannel)}。请点击该渠道的“编辑”完成配置，或配置其他渠道。` : "请完成至少一个渠道的连接信息和模型配置；其他未完成草稿可继续保留。") : "当前没有可用的系统模型，请联系管理员配置系统渠道");
+            if (invalidChannel) focusInvalidChannelField(invalidChannel);
             return;
         }
-        if (!effectiveConfig.channels.some(isChannelReady)) {
-            selectSection("channels");
-            message.error(customChannelsEnabled ? (shouldPromptContinue ? "请先完成至少一个渠道的 Base URL、API Key 和模型配置" : "当前没有可用渠道，请先完成连接信息和模型配置") : "当前没有可用的系统模型，请联系管理员配置系统渠道");
-            return;
+        setSavingReturn(true);
+        try {
+            await awaitModelConfigSaved(flushModelConfig, getModelConfigPersistenceState);
+            message.success("配置已保存到本地工作区，正在返回创作页面");
+            navigate(-1);
+        } catch {
+            message.error("配置尚未保存，编辑内容已保留。请重试保存后再返回创作。");
+        } finally {
+            setSavingReturn(false);
         }
-        message.success("配置已保存，正在返回创作页面");
-        navigate(-1);
     };
 
     const panes: Record<ConfigSectionKey, ReactNode> = {
         channels: (
             <SettingsPane>
+                <LocalComfySettingsPane />
                 <ChannelSettingsPane />
                 <div className="settings-section mt-4">
                     <div className="settings-pane-header">
@@ -106,13 +115,13 @@ export default function SettingsPage() {
             {shouldPromptContinue ? (
                 <div className="settings-topbar shrink-0">
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                        <Button icon={<ArrowLeft className="size-4" />} onClick={() => navigate(-1)}>返回创作</Button>
-                        <Button type="primary" onClick={finishConfig}>保存并返回</Button>
+                        <Button icon={<ArrowLeft className="size-4" />} disabled={savingReturn} onClick={() => void returnToCreation(false)}>返回创作</Button>
+                        <Button type="primary" loading={savingReturn} onClick={() => void returnToCreation(true)}>保存并返回</Button>
                     </div>
                 </div>
             ) : null}
             <div className="settings-library-frame flex min-h-0 flex-1 flex-col md:flex-row">
-                <section className="settings-content flex min-h-0 min-w-0 flex-1 flex-col">
+                <section className="settings-content flex min-h-0 min-w-0 flex-1 flex-col" inert={savingReturn}>
                     <div className="app-workspace-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 md:px-6 md:py-5">
                         <div className="settings-pane-root mx-auto w-full max-w-none">
                             {panes[activeTab]}

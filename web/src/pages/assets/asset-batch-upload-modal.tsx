@@ -12,7 +12,7 @@ import { persistWorkspaceAssetChanges } from "@/services/workspace-asset-reposit
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { AssetFolder } from "@/services/api/workspace-data";
 
-type BatchItem = { id: string; file: File; status: "queued" | "uploading" | "done" | "error"; error?: string; percent?: number };
+type BatchItem = { id: string; file: File; assetId?: string; status: "queued" | "uploading" | "done" | "error"; error?: string; percent?: number };
 
 export function AssetBatchUploadModal({ open, defaultFolderId, folders, onClose, onComplete }: { open: boolean; defaultFolderId: string; folders: AssetFolder[]; onClose: () => void; onComplete: () => Promise<void> }) {
     const { message } = App.useApp();
@@ -47,28 +47,27 @@ export function AssetBatchUploadModal({ open, defaultFolderId, folders, onClose,
                 const item = pending[cursor++];
                 setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "uploading", percent: 10, error: undefined } : entry));
                 try {
-                    if (item.file.type.startsWith("video/")) {
+                    let assetId = item.assetId;
+                    if (!assetId && item.file.type.startsWith("video/")) {
                         const uploaded = await uploadMediaFile(item.file, "video", (uploadedBytes, totalBytes) => {
                             setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, percent: totalBytes ? Math.round((uploadedBytes / totalBytes) * 100) : 10 } : entry));
                         });
-                        addAsset({ kind: "video", title: item.file.name.replace(/\.[^.]+$/, ""), category, folderId: folderId || undefined, coverUrl: uploaded.preview?.url || "", tags, source: "批量上传", metadata: { source: "manual-batch" }, data: { url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width || 0, height: uploaded.height || 0, durationMs: uploaded.durationMs, hasAudio: uploaded.hasAudio, bytes: uploaded.bytes, mimeType: uploaded.mimeType } });
-                    } else {
+                        assetId = addAsset({ kind: "video", title: item.file.name.replace(/\.[^.]+$/, ""), category, folderId: folderId || undefined, coverUrl: uploaded.preview?.url || "", tags, source: "批量上传", metadata: { source: "manual-batch" }, data: { url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width || 0, height: uploaded.height || 0, durationMs: uploaded.durationMs, hasAudio: uploaded.hasAudio, bytes: uploaded.bytes, mimeType: uploaded.mimeType } });
+                    } else if (!assetId) {
                         const uploaded = await uploadImage(item.file);
                         const meta = await readImageMeta(uploaded.url).catch(() => ({ width: uploaded.width, height: uploaded.height, mimeType: uploaded.mimeType }));
-                        addAsset({ kind: "image", title: item.file.name.replace(/\.[^.]+$/, ""), category, folderId: folderId || undefined, coverUrl: uploaded.url, tags, source: "批量上传", metadata: { source: "manual-batch" }, data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: meta.width || uploaded.width, height: meta.height || uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType } });
+                        assetId = addAsset({ kind: "image", title: item.file.name.replace(/\.[^.]+$/, ""), category, folderId: folderId || undefined, coverUrl: uploaded.url, tags, source: "批量上传", metadata: { source: "manual-batch" }, data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: meta.width || uploaded.width, height: meta.height || uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType } });
                     }
+                    // A failed backend registration retries this ID, not the upload.
+                    setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, assetId } : entry));
+                    await persistWorkspaceAssetChanges([assetId]);
                     setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "done", percent: 100 } : entry));
                 } catch (error) {
-                    setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "error", error: error instanceof Error ? error.message : "上传失败" } : entry));
+                    setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "error", error: localSavedRemotePendingMessage("素材上传保存", error) } : entry));
                 }
             }
         };
         await Promise.all(Array.from({ length: Math.min(4, pending.length) }, () => worker()));
-        try {
-            await persistWorkspaceAssetChanges();
-        } catch (error) {
-            message.warning(localSavedRemotePendingMessage("部分素材已保存在本地", error));
-        }
         setUploading(false);
         await onComplete();
     };

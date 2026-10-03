@@ -12,6 +12,7 @@ import { defaultModelCapabilityConfig, pluginWorkflowCapabilityConfig } from "..
 import { ChannelModelSettings } from "../src/pages/settings/channel-model-settings";
 import { applyFetchedChannelModelCatalog } from "../src/pages/settings/channel-settings-pane";
 import { fetchChannelModels } from "../src/services/api/image";
+import { fetchPluginProviderCatalog } from "../src/services/api/plugin-catalog";
 import { apiClient } from "../src/services/api/request";
 import { createVideoGenerationTask } from "../src/services/api/video";
 import { createModelChannel, defaultConfig, modelDisplayName, normalizeConfigSnapshot, resolveModelRequestConfig, selectableModelsByCapability, type AiConfig } from "../src/stores/use-config-store";
@@ -66,6 +67,15 @@ function formEntries(body: unknown) {
 }
 
 describe("public channel model catalog", () => {
+    test("local model uses expose the existing video and speech protocols without a remote catalog", async () => {
+        let requests = 0;
+        apiClient.request = (async () => { requests += 1; throw new Error("unexpected remote catalog request"); }) as typeof apiClient.request;
+        const protocols = await fetchPluginProviderCatalog("user.custom-channel");
+        expect(protocols.find((item) => item.value === "newapi-channel-2")).toMatchObject({ capability: "video", create: "POST /v1/video/generations" });
+        expect(protocols.find((item) => item.value === "openai-audio")).toMatchObject({ capability: "audio", create: "POST /v1/audio/speech" });
+        expect(requests).toBe(0);
+    });
+
     test("keeps the fetched BeefAPI catalog dynamic while normalizing discovered image profiles", () => {
         const channel = createModelChannel({
             id: "beefapi",
@@ -236,6 +246,32 @@ describe("public channel model catalog", () => {
             expect.objectContaining({ id: "image-v1", modelType: "image", supportedEndpointTypes: ["openai-image"] }),
             expect.objectContaining({ id: "video-v1", modelType: "video", supportedEndpointTypes: ["openai-video"] }),
         ]);
+    });
+
+    test("local OpenAI model discovery carries configured business headers through the relay", async () => {
+        let capturedHeaders: Record<string, string> = {};
+        axios.request = (async (config) => {
+            capturedHeaders = config.headers as Record<string, string>;
+            return { data: { data: [{ id: "opaque-text" }] } };
+        }) as typeof axios.request;
+        const channel = createModelChannel({ baseUrl: "https://provider.example/v1", apiKey: "synthetic-test-key", headers: [{ name: "X-Tenant", value: "qa-tenant" }] });
+        const result = await fetchChannelModels(channel, false);
+        expect(result.models).toEqual(["opaque-text"]);
+        expect(JSON.parse(atob(capturedHeaders["x-canvas-upstream-headers"]))).toEqual(channel.headers);
+        expect(capturedHeaders["x-canvas-upstream-url"]).toBe("https://provider.example/v1/models");
+    });
+
+    test("local Gemini model discovery also preserves configured business headers", async () => {
+        let capturedHeaders: Record<string, string> = {};
+        axios.request = (async (config) => {
+            capturedHeaders = config.headers as Record<string, string>;
+            return { data: { models: [{ name: "models/opaque-model" }] } };
+        }) as typeof axios.request;
+        const channel = createModelChannel({ baseUrl: "https://provider.example", apiFormat: "gemini", apiKey: "synthetic-test-key", headers: [{ name: "X-Tenant", value: "qa-tenant" }] });
+        const result = await fetchChannelModels(channel, false);
+        expect(result.models).toEqual(["opaque-model"]);
+        expect(JSON.parse(atob(capturedHeaders["x-canvas-upstream-headers"]))).toEqual(channel.headers);
+        expect(capturedHeaders["x-canvas-upstream-format"]).toBe("gemini");
     });
 
     test("refresh application preserves discovered capabilities in the saved channel", () => {

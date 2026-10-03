@@ -30,6 +30,7 @@ import { assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
 import { deleteWorkspaceAsset, persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
 import { workspaceCapabilities } from "@/services/workspace-mode";
+import { requiresBackendLocalResourceStore } from "@/services/workspace-resource-storage";
 import { normalizeLocalAsset } from "@/lib/local-workspace-migration";
 import { useUserStore } from "@/stores/use-user-store";
 import { createAssetFolder, deleteAssetFolder, listAssetFolders, moveAssetsToFolder, updateAssetFolder, type AssetFolder } from "@/services/api/workspace-data";
@@ -98,7 +99,8 @@ export default function AssetsPage() {
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const userId = useUserStore((state) => state.user?.id || "");
     const localWorkspace = workspaceCapabilities().local;
-    const remoteMode = Boolean(userId) && !localWorkspace;
+    const backendAssets = requiresBackendLocalResourceStore();
+    const remoteMode = backendAssets || (Boolean(userId) && !localWorkspace);
     const retentionDays = useUserStore((state) => state.runtimeLimits.recycleBinRetentionDays ?? 30);
     const [viewMode, setViewMode] = useState<"library" | "trash">("library");
     const [keyword, setKeyword] = useState("");
@@ -210,7 +212,7 @@ export default function AssetsPage() {
     }, [validAssets, keyword, kindFilter, categoryFilter, folderFilter, favoriteOnly, recentOnly, projectFilter]);
 
     const assetPageQuery = useQuery({
-        queryKey: [...ASSET_LIBRARY_QUERY_KEY, page, pageSize, viewMode, kindFilter, categoryFilter, folderFilter, favoriteOnly, recentOnly, projectFilter, debouncedKeyword],
+        queryKey: [...ASSET_LIBRARY_QUERY_KEY, page, pageSize, viewMode, kindFilter, categoryFilter, folderFilter, favoriteOnly, recentOnly, projectFilter, debouncedKeyword, sortOrder, sourceTab],
         queryFn: ({ signal }) => loadAssetLibraryPage({
             page,
             pageSize,
@@ -220,6 +222,11 @@ export default function AssetsPage() {
             folderId: folderFilter !== "all" && folderFilter !== "uncategorized" ? folderFilter : undefined,
             uncategorized: folderFilter === "uncategorized",
             query: debouncedKeyword || undefined,
+            favoriteOnly: backendAssets && favoriteOnly,
+            recentOnly: backendAssets && recentOnly,
+            projectLabel: backendAssets && projectFilter !== "all" ? projectFilter : undefined,
+            generatedOnly: backendAssets && sourceTab === "history",
+            sort: backendAssets ? sortOrder : undefined,
             signal,
         }),
         enabled: remoteMode,
@@ -237,7 +244,7 @@ export default function AssetsPage() {
     const remoteReady = assetPageQuery.isSuccess && assetPageQuery.data !== undefined;
     const preferLocalUnsynced = remoteReady && remoteTotal === 0 && localVisibleAssets.length > 0;
     const remoteEntityOnlyPage = remoteReady && remotePageAssets.length === 0 && remoteTotal > 0;
-    const useRemotePage = !favoriteOnly && !recentOnly && projectFilter === "all" && remoteReady && !preferLocalUnsynced && !remoteEntityOnlyPage && (remotePageAssets.length > 0 || remoteTotal === 0);
+    const useRemotePage = backendAssets || (!favoriteOnly && !recentOnly && projectFilter === "all" && remoteReady && !preferLocalUnsynced && !remoteEntityOnlyPage && (remotePageAssets.length > 0 || remoteTotal === 0));
     const visibleAssets = useMemo(() => useRemotePage ? remotePageAssets : localVisibleAssets, [useRemotePage, remotePageAssets, localVisibleAssets]);
     const orderedVisibleAssets = useMemo(() => {
         const next = [...visibleAssets];
@@ -389,12 +396,12 @@ export default function AssetsPage() {
         if (!tagEditingAsset) return;
         updateAsset(tagEditingAsset.id, { tags: tagDraft.filter(Boolean) });
         try {
-            await persistWorkspaceAssetChanges();
+            await persistWorkspaceAssetChanges([tagEditingAsset.id]);
+            await invalidateAssetLibrary();
             message.success("标签已更新");
             setTagEditingAsset(null);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("标签已在本地更新", error));
-            setTagEditingAsset(null);
         }
     };
 
@@ -408,6 +415,10 @@ export default function AssetsPage() {
                 const image = await uploadImage(imageFile);
                 setImageUploadProgress({ phase: "confirming" });
                 imageData = { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType };
+                if (backendAssets && values.coverUrl === imageDraft?.dataUrl) {
+                    values.coverUrl = image.url;
+                    form.setFieldValue("coverUrl", image.url);
+                }
                 setImageDraft(imageData);
                 setImageFile(null);
                 void queryClient.invalidateQueries({ queryKey: assetStorageUsageQueryKey });
@@ -435,32 +446,40 @@ export default function AssetsPage() {
             metadata: editingAsset?.metadata || { source: "manual" },
         };
 
+        let savedId: string;
         if (values.kind === "text") {
             const asset = { ...base, kind: "text" as const, data: { content: (values.content || "").trim() } };
-            editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+            if (editingAsset) { updateAsset(editingAsset.id, asset); savedId = editingAsset.id; }
+            else savedId = addAsset(asset);
         } else {
             if (!imageData) {
                 message.error("请选择图片文件");
                 return;
             }
             const asset = { ...base, kind: "image" as const, data: imageData };
-            editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+            if (editingAsset) { updateAsset(editingAsset.id, asset); savedId = editingAsset.id; }
+            else savedId = addAsset(asset);
         }
 
+        // Retrying a failed save keeps the same ID and uploaded Resource.
+        const savedDraft = useAssetStore.getState().assets.find((asset) => asset.id === savedId);
+        if (savedDraft && savedDraft.kind !== "entity") setEditingAsset(savedDraft);
+
         try {
-            await persistWorkspaceAssetChanges();
+            await persistWorkspaceAssetChanges([savedId]);
             await invalidateAssetLibrary();
             message.success(editingAsset ? "素材已更新" : "素材已保存");
+            setIsAssetOpen(false);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage(editingAsset ? "素材已在本地更新" : "素材已在本地保存", error));
         }
-        setIsAssetOpen(false);
     };
 
     const toggleFavorite = async (asset: LibraryAsset) => {
         updateAsset(asset.id, { metadata: { ...(asset.metadata || {}), favorite: asset.metadata?.favorite !== true } });
         try {
-            await persistWorkspaceAssetChanges();
+            await persistWorkspaceAssetChanges([asset.id]);
+            await invalidateAssetLibrary();
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("收藏状态已在本地更新", error));
         }
@@ -491,7 +510,7 @@ export default function AssetsPage() {
         if (!file || !/\.(glb|gltf)$/i.test(file.name)) return;
         const uploaded = await uploadMediaFile(file, "model");
         void queryClient.invalidateQueries({ queryKey: assetStorageUsageQueryKey });
-        addAsset({
+        const assetId = addAsset({
             kind: "model",
             title: file.name.replace(/\.(glb|gltf)$/i, ""),
             coverUrl: "",
@@ -500,6 +519,13 @@ export default function AssetsPage() {
             data: { url: uploaded.url, storageKey: uploaded.storageKey, bytes: uploaded.bytes, mimeType: uploaded.mimeType, fileName: file.name },
             metadata: { source: "manual" },
         });
+        try {
+            await persistWorkspaceAssetChanges([assetId]);
+            await invalidateAssetLibrary();
+        } catch (error) {
+            message.warning(localSavedRemotePendingMessage("3D 模型保存", error));
+            return;
+        }
         // Hosted mode may retry the remote copy; local mode intentionally keeps
         // the browser fallback local and does not expose a cloud-upload warning.
         if (uploaded.pendingRemoteUpload) {
@@ -539,18 +565,20 @@ export default function AssetsPage() {
         if (!file) return;
         try {
             const importedAssets = await readAssetPackage(file);
-            importedAssets.forEach((asset) => {
+            const importedIds = importedAssets.map((asset) => {
                 const payload = { ...asset } as Record<string, unknown>;
                 delete payload.id;
                 delete payload.createdAt;
                 delete payload.updatedAt;
-                addAsset((localWorkspace ? normalizeLocalAsset(payload) : payload) as Parameters<typeof addAsset>[0]);
+                return addAsset((localWorkspace ? normalizeLocalAsset(payload) : payload) as Parameters<typeof addAsset>[0]);
             });
             await flushAssetStorePersistence();
             try {
-                await persistWorkspaceAssetChanges();
+                if (importedIds.length) await persistWorkspaceAssetChanges(importedIds);
+                await invalidateAssetLibrary();
             } catch (error) {
                 message.warning(localSavedRemotePendingMessage("素材已在本地导入", error));
+                return;
             }
             message.success(`已导入 ${importedAssets.length} 个素材`);
         } catch {
@@ -563,7 +591,8 @@ export default function AssetsPage() {
     const restoreAsset = async (asset: LibraryAsset) => {
         updateAsset(asset.id, { status: "confirmed" });
         try {
-            await persistWorkspaceAssetChanges();
+            await persistWorkspaceAssetChanges([asset.id]);
+            await invalidateAssetLibrary();
             message.success(`已还原素材「${asset.title}」`);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("已在本地还原", error));
@@ -575,10 +604,12 @@ export default function AssetsPage() {
         for (const id of selectedIds) {
             updateAsset(id, { status: "confirmed" });
         }
-        const count = selectedIds.length;
-        setSelectedIds([]);
+        const ids = [...selectedIds];
+        const count = ids.length;
         try {
-            await persistWorkspaceAssetChanges();
+            await persistWorkspaceAssetChanges(ids);
+            await invalidateAssetLibrary();
+            setSelectedIds([]);
             message.success(`已还原 ${count} 个素材`);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("已在本地还原", error));
@@ -588,7 +619,8 @@ export default function AssetsPage() {
     const archiveAsset = async (asset: LibraryAsset) => {
         updateAsset(asset.id, { status: "archived" });
         try {
-            await persistWorkspaceAssetChanges();
+            await persistWorkspaceAssetChanges([asset.id]);
+            await invalidateAssetLibrary();
             message.success(`已将「${asset.title}」移入回收站`);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("已移入回收站", error));
@@ -600,10 +632,12 @@ export default function AssetsPage() {
         for (const id of selectedIds) {
             updateAsset(id, { status: "archived" });
         }
-        const count = selectedIds.length;
-        setSelectedIds([]);
+        const ids = [...selectedIds];
+        const count = ids.length;
         try {
-            await persistWorkspaceAssetChanges();
+            await persistWorkspaceAssetChanges(ids);
+            await invalidateAssetLibrary();
+            setSelectedIds([]);
             message.success(`已将 ${count} 个素材移入回收站`);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("已移入回收站", error));
@@ -611,13 +645,15 @@ export default function AssetsPage() {
     };
 
     const emptyTrash = async () => {
-        const count = trashAssets.length;
+        const toDelete = backendAssets ? remotePageAssets : trashAssets;
+        const count = toDelete.length;
         if (!count) return;
         try {
-            for (const asset of trashAssets) {
+            for (const asset of toDelete) {
                 await deleteWorkspaceAsset(asset.id);
             }
             setSelectedIds([]);
+            await invalidateAssetLibrary();
             message.success(`已彻底清空回收站 ${count} 个素材`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "清空回收站失败");
@@ -653,7 +689,9 @@ export default function AssetsPage() {
     };
 
     if (sourceTab === "history") {
-        return <GenerationHistorySurface assets={activeAssets} onSelectPersonal={() => navigate("/assets?tab=personal")} onDownload={downloadImage} onArchive={(asset) => void archiveAsset(asset)} />;
+        if (backendAssets && (assetPageQuery.isPending || assetPageQuery.isError)) return <WorkspacePage><WorkspaceState icon="assets" compact title={assetPageQuery.isError ? "生成历史读取失败" : "正在读取生成历史"} description={assetPageQuery.error instanceof Error ? assetPageQuery.error.message : undefined} />{assetPageQuery.isError ? <Button onClick={() => void assetPageQuery.refetch()}>重试</Button> : null}</WorkspacePage>;
+        const historyAssets = backendAssets ? (assetPageQuery.data?.matchingAssets || remotePageAssets).filter((asset): asset is LibraryAsset => asset.kind !== "entity") : activeAssets;
+        return <GenerationHistorySurface assets={historyAssets} onSelectPersonal={() => navigate("/assets?tab=personal")} onDownload={downloadImage} onArchive={(asset) => void archiveAsset(asset)} />;
     }
 
     return (
@@ -691,14 +729,14 @@ export default function AssetsPage() {
                                             {trashAssets.length > 0 ? (
                                                 <Popconfirm
                                                     title="确定清空回收站吗？"
-                                                    description="清空后所有回收站素材及其文件将被彻底永久删除，不可恢复。"
+                                                    description={backendAssets ? "将删除当前页的回收站素材，不可恢复。" : "清空后所有回收站素材及其文件将被彻底永久删除，不可恢复。"}
                                                     onConfirm={() => void emptyTrash()}
                                                     okText="清空"
                                                     okButtonProps={{ danger: true }}
                                                     cancelText="取消"
                                                 >
                                                     <Button danger icon={<Trash2 className="size-3.5" />}>
-                                                        清空回收站
+                                                        {backendAssets ? "删除当前页" : "清空回收站"}
                                                     </Button>
                                                 </Popconfirm>
                                             ) : null}
@@ -906,7 +944,11 @@ export default function AssetsPage() {
                                     onMoveToFolder={(folderId) => void moveAssetsToFolder(selectedAssets.map((asset) => asset.id), folderId)}
                                 />
                             ) : null}
-                            {validAssets.length === 0 && totalAssets === 0 ? (
+                            {backendAssets && assetPageQuery.isError ? (
+                                <div role="alert"><WorkspaceState icon="assets" compact title="素材读取失败" description={assetPageQuery.error instanceof Error ? assetPageQuery.error.message : "后端素材未能读取，浏览器缓存仍保留。"} /><Button onClick={() => void assetPageQuery.refetch()}>重试</Button></div>
+                            ) : backendAssets && assetPageQuery.isPending ? (
+                                <WorkspaceState icon="assets" compact title="正在读取素材" />
+                            ) : (backendAssets ? totalAssets === 0 : validAssets.length === 0 && totalAssets === 0) ? (
                                 viewMode === "trash" ? (
                                     <WorkspaceState icon="assets" compact title="回收站是空的" description="删除画布或手动移入回收站的素材会暂存到这里，可在需要时随时还原。" />
                                 ) : (

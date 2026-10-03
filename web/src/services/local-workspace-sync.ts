@@ -3,6 +3,9 @@ import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasPro
 import { flushAssetStorePersistence, useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { http } from "@/services/api/request";
+import { getWorkspaceAssetsByIds, listWorkspaceAssetsPage } from "@/services/api/workspace-data";
+import { requiresBackendLocalResourceStore } from "@/services/workspace-resource-storage";
+import { appendMissingBackendAssets, isBackendAssetCacheError, loadFilteredBackendAssetPage, type BackendAssetPage, type BackendAssetPageOptions } from "@/services/workspace-asset-backend";
 
 type CanvasSaveSummary = Pick<CanvasProject, "id" | "title" | "createdAt" | "updatedAt" | "revision">;
 
@@ -60,20 +63,18 @@ export async function syncLocalCanvasSnapshot(id: string, patch: Partial<Pick<Ca
     return saved;
 }
 
-type LocalAssetPageOptions = {
-    page: number;
-    pageSize: number;
-    kind?: string;
-    category?: string;
-    folderId?: string;
-    uncategorized?: boolean;
-    status?: string;
-    query?: string;
-    signal?: AbortSignal;
-};
+function appendBackendAssetCache(assets: readonly Asset[]) {
+    useAssetStore.setState((state) => ({ assets: appendMissingBackendAssets(state.assets, assets) }));
+}
 
-export async function loadAssetLibraryPage(options: LocalAssetPageOptions) {
+export async function loadAssetLibraryPage(options: BackendAssetPageOptions): Promise<BackendAssetPage> {
     if (options.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+    if (requiresBackendLocalResourceStore()) {
+        const result = await loadFilteredBackendAssetPage(options, listWorkspaceAssetsPage);
+        if (options.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        appendBackendAssetCache(result.assets);
+        return result;
+    }
     const query = options.query?.trim().toLowerCase() || "";
     const filtered = useAssetStore.getState().assets.filter((asset) => {
         if (options.kind && asset.kind !== options.kind) return false;
@@ -103,12 +104,26 @@ export async function loadAssetLibraryPage(options: LocalAssetPageOptions) {
 }
 
 export async function loadAssetsForUse(ids: Iterable<string>) {
+    const selected = [...new Set(ids)];
+    if (requiresBackendLocalResourceStore() && selected.length) {
+        const loaded: Asset[] = [];
+        for (let start = 0; start < selected.length; start += 100) {
+            const result = await getWorkspaceAssetsByIds(selected.slice(start, start + 100));
+            loaded.push(...result.assets);
+        }
+        const found = new Set(loaded.map((asset) => asset.id));
+        if (selected.some((id) => !found.has(id))) throw new Error("部分后端素材不存在，请重新选择素材");
+        appendBackendAssetCache(loaded);
+        return;
+    }
     const available = new Set(useAssetStore.getState().assets.map((asset) => asset.id));
-    if ([...new Set(ids)].some((id) => !available.has(id))) throw new Error("部分本地素材不存在，请重新选择素材");
+    if (selected.some((id) => !available.has(id))) throw new Error("部分本地素材不存在，请重新选择素材");
 }
 
 export function localSavedRemotePendingMessage(localAction: string, error: unknown) {
     const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "未知错误";
+    if (isBackendAssetCacheError(error)) return `后端已保存，但浏览器缓存写入失败；当前页编辑仍保留。${detail}`;
+    if (requiresBackendLocalResourceStore()) return `后端未确认保存；当前页编辑仍保留。${detail}`;
     return `${localAction}失败：${detail}`;
 }
 

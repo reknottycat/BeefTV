@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useUserStore } from "@/stores/use-user-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { requiresBackendLocalResourceStore } from "@/services/workspace-resource-storage";
 
 import { AssetMediaPreview } from "@/components/asset-media-preview";
 import { AssetLibraryCard } from "@/components/assets/asset-library-card";
@@ -133,7 +134,8 @@ export function AssetLibraryPickerModal({
     // The local desktop workspace may still have a synthetic user id. That id
     // must never turn on the hosted asset-library query; local mode reads the
     // IndexedDB/Go resource store only.
-    const remoteEnabled = remoteLibrary && !isLocalWorkspaceMode() && Boolean(userId) && source === "local";
+    const backendAssets = requiresBackendLocalResourceStore();
+    const remoteEnabled = remoteLibrary && (backendAssets || (!isLocalWorkspaceMode() && Boolean(userId))) && source === "local";
     useEffect(() => {
         const timer = window.setTimeout(() => setRemoteKeyword(keyword.trim()), 250);
         return () => window.clearTimeout(timer);
@@ -167,7 +169,7 @@ export function AssetLibraryPickerModal({
     const remoteReady = remoteEnabled && remoteQuery.isSuccess;
     const preferLocalUnsynced = remoteReady && remoteTotal === 0 && localItems.length > 0;
     const remoteEntityOnlyPage = remoteReady && remoteItems.length === 0 && remoteTotal > 0;
-    const useRemoteItems = remoteReady && !preferLocalUnsynced && !remoteEntityOnlyPage && (remoteItems.length > 0 || remoteTotal === 0);
+    const useRemoteItems = (remoteEnabled && backendAssets) || (remoteReady && !preferLocalUnsynced && !remoteEntityOnlyPage && (remoteItems.length > 0 || remoteTotal === 0));
     const effectivePagination = useRemoteItems ? { current: remotePage, pageSize: remotePageSize, total: remoteTotal, onChange: (page: number, pageSize: number) => { setRemotePage(page); setRemotePageSize(pageSize); } } : pagination;
     const pluginItems = useMemo(() => allItems.filter((item) => Boolean(item.external)), [allItems]);
     const hasPluginSource = useMemo(() => Object.keys(categoryLabels).some((value) => value.startsWith("external:")) || pluginItems.some((item) => item.category.startsWith("external:")), [categoryLabels, pluginItems]);
@@ -279,7 +281,7 @@ export function AssetLibraryPickerModal({
             for (const id of archivedSelectedIds) {
                 useAssetStore.getState().updateAsset(id, { status: "confirmed" });
             }
-            await persistWorkspaceAssetChanges();
+            await persistWorkspaceAssetChanges(archivedSelectedIds);
             setSelected(new Set());
             message.success(`已还原 ${archivedSelectedIds.length} 个素材至素材库`);
             setCategory("all");

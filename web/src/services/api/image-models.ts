@@ -22,8 +22,9 @@ type OpenAIModelRecord = {
     supported_endpoint_types?: string[];
 };
 type OpenAIModelPayload = { data?: OpenAIModelRecord[]; error?: { message?: string } };
+type ChannelCatalogConfig = Pick<ModelChannel, "baseUrl" | "apiKey" | "apiFormat" | "headers">;
 
-async function fetchOpenAIModelCatalog(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+async function fetchOpenAIModelCatalog(config: ChannelCatalogConfig) {
     const payload = await createChannelTransport(config, "image").get<OpenAIModelPayload>(buildApiUrl(config.baseUrl, "/models"));
     return (payload.data || [])
         .map((model) =>
@@ -37,7 +38,7 @@ async function fetchOpenAIModelCatalog(config: Pick<AiConfig, "baseUrl" | "apiKe
         .filter((item): item is ChannelModelCatalogItem => Boolean(item));
 }
 
-export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+export async function fetchImageModels(config: ChannelCatalogConfig) {
     try {
         if (config.apiFormat === "gemini") {
             const requestConfig = { ...defaultGeminiConfig, ...config };
@@ -64,10 +65,10 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
     }
     if (!viaBackend) {
         if (channel.apiFormat !== "gemini") {
-            const catalog = await fetchOpenAIModelCatalog({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+            const catalog = await fetchOpenAIModelCatalog(channel);
             return { models: catalog.map((item) => item.id).sort((a, b) => a.localeCompare(b)), catalog };
         }
-        const models = await fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+        const models = await fetchImageModels(channel);
         return { models, catalog: models.map((id) => ({ id })) };
     }
     try {

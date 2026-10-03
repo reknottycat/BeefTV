@@ -4,8 +4,9 @@ import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
 const BASE = "/local-comfy/v1";
 const TIMEOUT = 15_000;
+export const localComfyServiceUrl = `${String(apiBaseURL).replace(/\/$/, "")}${BASE}`;
 
-export type LocalComfyConfig = { generation_enabled: boolean; storage_scope: "sidecar"; concurrency: number; max_reference_bytes: number; recipe_count: number };
+export type LocalComfyConfig = { generation_enabled: boolean; storage_scope: "sidecar"; concurrency: number; max_reference_bytes: number; recipe_count: number; comfyui_endpoint?: string };
 export type LocalComfyRecipe = { id: string; name: string; mode: string; reference_slots: number; ready: boolean; reference_constraints?: Array<{ role: string; width: number; height: number; mime_types: string[] }> };
 export type LocalComfyProject = { id: string; name: string; upstream_project_id: string | null; canvas_project_id?: string | null; storage_scope: "sidecar"; script: string; created_at: string };
 export type LocalComfyAsset = { id: string; project_id: string; name: string; kind: string; mime_type: string; size: number; sha256: string; source: string; upstream_asset_id: string | null; job_id?: string; shot_id?: string; width?: number; height?: number; content_url: string; created_at: string };
