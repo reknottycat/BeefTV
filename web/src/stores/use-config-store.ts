@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { channelConnectionForRequest, type ChannelConnectionFields } from "@/lib/channel-connection";
+import { normalizeLocalComfyDefaults, type LocalComfyDefaults } from "@/lib/local-comfy-defaults";
 import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { defaultProtocolForCapability, defaultProtocolForModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
@@ -388,6 +389,7 @@ export type AiConfig = ChannelConnectionFields & {
     apiKey: string;
     apiFormat: ApiCallFormat;
     channels: ModelChannel[];
+    localComfyDefaults?: LocalComfyDefaults;
     runningHub: RunningHubConfig;
     /** 仅用于单次生成任务路由，不属于全局渠道启用状态。 */
     taskWorkflowProvider?: "model" | "runninghub";
@@ -431,6 +433,7 @@ export const defaultConfig: AiConfig = {
     channelMode: "remote",
     baseUrl: OPENAI_BASE_URL,
     apiKey: "",
+    localComfyDefaults: {},
     apiFormat: "openai",
     // 创作端模型目录只能来自后台公开逻辑模型和用户自定义渠道，不能内置供应商模型。
     channels: [],
@@ -690,6 +693,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
         // values. Keep all fields consumed by `.trim()` callers as strings.
         baseUrl: typeof persistedConfig.baseUrl === "string" ? persistedConfig.baseUrl : defaultConfig.baseUrl,
         apiKey: typeof persistedConfig.apiKey === "string" ? persistedConfig.apiKey : "",
+        localComfyDefaults: normalizeLocalComfyDefaults(persistedConfig.localComfyDefaults),
         runningHub: {
             ...defaultConfig.runningHub,
             ...(persistedRunningHub || {}),

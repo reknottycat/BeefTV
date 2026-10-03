@@ -4,6 +4,24 @@ import type { CanvasProject } from "../src/stores/canvas/use-canvas-store";
 import { loadMissingLocalComfyCanvas, localComfyCanvasPath, localComfyJobActive, localComfyJobRetryable, localComfyMatchesCanvas, localComfyProjectForCanvas, localComfyProjectInput, localComfyProjectMatchesCanvas, localComfyReferenceProblem, localComfySeed, localComfyShotForContext, localComfySourceForContext } from "../src/pages/local-comfy/context";
 
 describe("local Comfy workflow boundaries", () => {
+    test("standalone image/video workflow entries carry only their intended use in the URL", () => {
+        for (const mode of ["image", "video"] as const) {
+            const path = localComfyCanvasPath({ projectId: "", mode, prompt: "private script", referenceAssetIds: ["private reference"] });
+            const parsed = new URL(path, "http://localhost");
+            expect(parsed.pathname).toBe("/local-comfy");
+            expect(parsed.searchParams.get("mode")).toBe(mode);
+            expect(parsed.searchParams.has("projectId")).toBe(false);
+            expect(path).not.toContain("private");
+        }
+        expect(localComfyCanvasPath({ projectId: "" })).toBe("/local-comfy");
+    });
+    test("a video node handoff preserves its project/node/shot relationship without URL prompts", () => {
+        const path = localComfyCanvasPath({ projectId: "canvas-a", nodeId: "video-a", shotId: "shot-a", mode: "video", prompt: "private shot", referenceAssetIds: ["native-asset-a"] });
+        const parsed = new URL(path, "http://localhost");
+        expect(Object.fromEntries(parsed.searchParams)).toEqual({ projectId: "canvas-a", nodeId: "video-a", shotId: "shot-a", mode: "video" });
+        expect(path).not.toContain("private");
+        expect(path).not.toContain("native-asset-a");
+    });
     test("canvas handoff keeps private prompt and reference data out of the URL", () => {
         const path = localComfyCanvasPath({ projectId: "project a", nodeId: "node/1", shotId: "shot?2", prompt: "private script", referenceAssetIds: ["private asset"] });
         const parsed = new URL(path, "http://localhost");

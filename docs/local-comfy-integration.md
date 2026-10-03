@@ -64,10 +64,42 @@ Comfy recipe refresh inspects registered node classes, without submitting a
 GPU job or automatically registering every installed checkpoint.
 
 Discovery and static checks do not establish account access, billing
-authorization or successful generation. Directory entries are not connected
-to native project defaults or unified generation dispatch. Community AI apps,
-workflow-ID import and weight/resource listings are separate capabilities.
+authorization or successful generation. Directory rows do not populate native
+cloud model selectors or take over unified generation dispatch. Registered
+recipes have a separate local workflow default configuration described below.
+Community AI apps, workflow-ID import and weight/resource listings are separate
+capabilities.
 See [Channel connection options](channel-connection-options.md) for the three
 non-secret connection fields, public text-provider presets and directory
 boundaries; the adapter's detailed API remains in
 [CONTRACT.md](../tools/comfy_adapter/CONTRACT.md).
+
+## Local workflow defaults and entry points
+
+The settings panel reads the instance's actual `/recipes` response and stores
+separate image/video `{recipeId, seed}` values in `config.localComfyDefaults`.
+Only registered recipes are offered; Qwen-Image 2.1, H3 I2V and the 512 preview
+appear when registered on that instance. Missing, mismatched or unready saved
+recipes stay visible and require correction. There is no automatic fallback
+to another recipe or cloud channel. Seeds are integers from 0 to 4294967295;
+static readiness does not establish a successful GPU execution.
+
+These non-secret defaults use the existing model configuration repository,
+including a workspace with no cloud channels. Save and return wait for that
+repository's persistence result; failures retain the draft for retry. Saving
+does not require a cloud API Key and does not enable generation.
+
+Image/video nodes and the creation page provide a separate local workflow
+entry. Mode and available project/node/shot IDs travel in the query; prompt and
+reference asset IDs travel in router state. The workspace loads the saved
+recipe and seed for that mode. Users must select or register the local project
+and shot, review the prompt and select or upload the actual reference images.
+Source asset IDs alone do not copy images into the sidecar.
+
+Opening the workspace does not submit `/prompt`. Generation remains a manual
+workspace action governed by the existing generation switch, recipe/reference
+validation, deduplication and queue checks. The current deployment keeps
+generation disabled. The original cloud model enums, protocols and TaskCenter
+dispatch remain separate. Local image/video defaults do not configure image
+recognition, TTS or automatic review; Ref2VA video/audio references remain
+unsupported.

@@ -5,6 +5,8 @@ import { Link, useLocation, useSearchParams } from "react-router";
 import { createClientId } from "@/lib/client-id";
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useConfigStore } from "@/stores/use-config-store";
+import { applyLocalComfyEntryDefaults, localComfyDefaultProblem, localComfyEntrySelection, localComfySeedProblem, normalizeLocalComfyMode } from "@/lib/local-comfy-defaults";
 import { requiresBackendLocalResourceStore } from "@/services/workspace-resource-storage";
 import { archiveLocalComfyJob, createLocalComfyJob, createLocalComfyProject, createLocalComfyShot, getLocalComfyBackendCanvas, getLocalComfyConfig, listLocalComfyAssets, listLocalComfyJobs, listLocalComfyProjects, listLocalComfyRecipes, listLocalComfyShots, localComfyAssetContentUrl, pollLocalComfyJob, retryLocalComfyJob, saveLocalComfyScript, uploadLocalComfyReference, type LocalComfyAsset, type LocalComfyConfig, type LocalComfyJob, type LocalComfyProject, type LocalComfyRecipe, type LocalComfyShot } from "@/services/api/local-comfy";
 import { bindLocalComfyResult } from "./bind-result";
@@ -28,9 +30,12 @@ export default function LocalComfyPage() {
     const location = useLocation();
     const entry = (location.state || {}) as Partial<LocalComfyCanvasContext>;
     const canvasProjects = useCanvasStore((state) => state.projects);
-    const context: LocalComfyCanvasContext = { projectId: params.get("projectId") || "", nodeId: params.get("nodeId") || undefined, shotId: params.get("shotId") || undefined, referenceAssetIds: entry.referenceAssetIds || [] };
+    const localDefaults = useConfigStore((state) => state.config.localComfyDefaults);
+    const context: LocalComfyCanvasContext = { projectId: params.get("projectId") || "", nodeId: params.get("nodeId") || undefined, shotId: params.get("shotId") || undefined, referenceAssetIds: entry.referenceAssetIds || [], mode: normalizeLocalComfyMode(params.get("mode")) || normalizeLocalComfyMode(entry.mode) };
     const canvasProject = canvasProjects.find((project) => project.id === context.projectId);
     const sourceNode = localComfySourceForContext(context, canvasProject);
+    const entryMode = context.mode || (sourceNode?.type === "video" ? "video" : "image");
+    const defaultSelection = localComfyEntrySelection(localDefaults, entryMode);
     const handoffKey = JSON.stringify([context.projectId, context.nodeId, context.shotId, location.key]);
     const [config, setConfig] = useState<LocalComfyConfig | null>(null);
     const [recipes, setRecipes] = useState<LocalComfyRecipe[]>([]);
@@ -40,9 +45,9 @@ export default function LocalComfyPage() {
     const [shotId, setShotId] = useState("");
     const [assets, setAssets] = useState<LocalComfyAsset[]>([]);
     const [jobs, setJobs] = useState<LocalComfyJob[]>([]);
-    const [recipeId, setRecipeId] = useState("");
+    const [recipeId, setRecipeId] = useState(defaultSelection.recipeId);
     const [prompt, setPrompt] = useState(entry.prompt || sourceNode?.metadata?.composerContent || sourceNode?.metadata?.prompt || "");
-    const [seed, setSeed] = useState("0");
+    const [seed, setSeed] = useState(defaultSelection.seed);
     const [references, setReferences] = useState<string[]>([]);
     const [script, setScript] = useState("");
     const [projectName, setProjectName] = useState(canvasProject?.title || "");
@@ -61,10 +66,17 @@ export default function LocalComfyPage() {
     const submitIdentity = useRef<{ fingerprint: string; key: string } | null>(null);
     const retryIdentities = useRef(new Map<string, { fingerprint: string; key: string }>());
     const promptTouched = useRef(false);
+    const recipeTouched = useRef(false);
+    const seedTouched = useRef(false);
     const handoff = useRef<{ key: string; canvasReady: boolean; sourceReady: boolean } | null>(null);
     const selectedProject = projects.find((project) => project.id === projectId);
     const selectedShot = shots.find((shot) => shot.id === shotId);
     const recipe = recipes.find((item) => item.id === recipeId);
+    const seedProblem = localComfySeedProblem(seed);
+    const defaultProblem = localComfyDefaultProblem(defaultSelection.recipeId ? defaultSelection : undefined, recipes, entryMode);
+    const activeDefaultProblem = localComfyDefaultProblem({ ...defaultSelection, seed: seedTouched.current ? seed : defaultSelection.seed }, recipes, entryMode);
+    const defaultNeedsCorrection = Boolean(!recipeTouched.current && defaultSelection.recipeId && activeDefaultProblem);
+    const defaultSignature = JSON.stringify([defaultSelection.recipeId, defaultSelection.seed]);
     const resultAssets = assets.filter((asset) => asset.kind === "result");
     const referenceAssets = assets.filter((asset) => asset.kind !== "result");
     const referenceProblem = localComfyReferenceProblem(recipe?.reference_constraints, references.map((id) => assets.find((asset) => asset.id === id)));
@@ -102,6 +114,8 @@ export default function LocalComfyPage() {
         if (handoff.current?.key !== handoffKey) {
             actionController.current?.abort();
             promptTouched.current = false;
+            recipeTouched.current = false;
+            seedTouched.current = false;
             setPrompt(entry.prompt || sourceNode?.metadata?.composerContent || sourceNode?.metadata?.prompt || "");
             setProjectName(canvasProject?.title || "");
             setShotName(sourceNode?.title || "");
@@ -122,6 +136,12 @@ export default function LocalComfyPage() {
     }, [handoffKey, canvasProject?.id, sourceNode?.id]);
 
     useEffect(() => {
+        const next = applyLocalComfyEntryDefaults(defaultSelection, { recipeId, seed }, { recipe: recipeTouched.current, seed: seedTouched.current });
+        setRecipeId(next.recipeId);
+        setSeed(next.seed);
+    }, [handoffKey, entryMode, defaultSignature]);
+
+    useEffect(() => {
         const controller = new AbortController();
         setLoading(true);
         document.title = "本地生成 · BeefTV";
@@ -129,7 +149,6 @@ export default function LocalComfyPage() {
             .then(([nextConfig, nextRecipes, nextProjects]) => {
                 if (controller.signal.aborted) return;
                 setConfig(nextConfig); setRecipes(nextRecipes); setProjects(nextProjects);
-                setRecipeId(nextRecipes.find((item) => item.ready)?.id || "");
                 const canvas = useCanvasStore.getState().projects.find((project) => project.id === context.projectId);
                 setProjectId(context.projectId ? localComfyProjectForCanvas(nextProjects, canvas)?.id || "" : nextProjects[0]?.id || "");
             }).catch((failure) => { if (!controller.signal.aborted && !isAbort(failure)) setError(errorText(failure)); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -178,11 +197,11 @@ export default function LocalComfyPage() {
     const refresh = () => runAction("读取记录", async (signal) => {
         const [nextConfig, nextRecipes, nextProjects, nextJobs, nextAssets] = await Promise.all([getLocalComfyConfig(signal), listLocalComfyRecipes(signal), listLocalComfyProjects(signal), projectId ? listLocalComfyJobs(projectId, shotId || undefined, signal) : Promise.resolve([]), projectId ? listLocalComfyAssets(projectId, signal) : Promise.resolve([])]);
         setConfig(nextConfig); setRecipes(nextRecipes); setProjects(nextProjects); setJobs(nextJobs); setAssets(nextAssets); setNotice("记录已刷新");
-        if (!recipeId) setRecipeId(nextRecipes.find((item) => item.ready)?.id || "");
         if (!projectId) setProjectId(context.projectId ? localComfyProjectForCanvas(nextProjects, canvasProject)?.id || "" : nextProjects[0]?.id || "");
     });
     const submit = () => runAction("提交任务", async (signal) => {
         if (!config?.generation_enabled) throw new Error("当前真实生成未启用，无法提交 GPU 任务");
+        if (defaultNeedsCorrection) throw new Error(activeDefaultProblem);
         if (context.projectId && !matchesCanvas) throw new Error("当前登记项目或镜头与原画布不一致，请重新选择对应镜头");
         if (!projectId || !shotId || !recipe?.ready || !prompt.trim()) throw new Error("请选择项目、镜头和可用配方，并填写提示词");
         if (references.length !== recipe.reference_slots) throw new Error(`这个配方需要 ${recipe.reference_slots} 张参考图，请按顺序选择`);
@@ -237,16 +256,19 @@ export default function LocalComfyPage() {
                 {selectedProject ? <p className="break-all text-xs text-foreground/65">原生项目：{selectedNativeProjectId || "未关联"}；画布：{selectedProject.canvas_project_id || (canvasProject && localComfyProjectForCanvas([selectedProject], canvasProject) ? canvasProject.id : "未关联")}{legacyCanvasProject ? "（旧登记兼容）" : ""}；存储：独立本地生成库</p> : null}
                 <label className="block space-y-1.5" htmlFor="local-comfy-shot"><span className="text-sm">镜头</span><AppSelect id="local-comfy-shot" className="w-full" value={shotId || undefined} placeholder="选择镜头" options={shots.map((shot) => ({ value: shot.id, label: shot.name }))} onChange={selectShot} disabled={Boolean(busy)} /></label>
                 <div className="flex flex-wrap items-end gap-2"><label className="min-w-40 flex-1 space-y-1.5" htmlFor="local-comfy-shot-name"><span className="text-sm">镜头名称</span><Input id="local-comfy-shot-name" value={shotName} onChange={(event) => setShotName(event.target.value)} /></label><Button disabled={!projectId || !shotName.trim() || Boolean(busy) || Boolean(context.projectId && (!sourceNode || !localComfyProjectMatchesCanvas(selectedProject, canvasProject)))} onClick={() => void runAction("登记镜头", async (signal) => { const currentCanvas = useCanvasStore.getState().projects.find((project) => project.id === context.projectId); if (context.projectId && (!localComfySourceForContext(context, currentCanvas) || !localComfyProjectMatchesCanvas(selectedProject, currentCanvas))) throw new Error("登记项目与原画布镜头不一致，请返回画布核对"); const shot = await createLocalComfyShot({ project_id: projectId, name: shotName.trim(), upstream_shot_id: context.shotId || context.nodeId, reference_asset_ids: references }, signal); setShots((current) => [shot, ...current]); setShotId(shot.id); setNotice("镜头已登记，原导演台编排未改动"); })}>登记镜头</Button></div>
-                <label className="block space-y-1.5" htmlFor="local-comfy-recipe"><span className="text-sm">生成配方</span><AppSelect id="local-comfy-recipe" className="w-full" value={recipeId || undefined} options={recipes.map((item) => ({ value: item.id, label: `${item.name}${item.ready ? "" : "（未配置）"}`, disabled: !item.ready }))} onChange={setRecipeId} disabled={Boolean(busy)} /></label>
+                <p className="text-xs leading-5 text-foreground/65">本地工作流入口：{entryMode === "image" ? "图片" : "视频"}。{loading ? "正在核对默认配方。" : defaultProblem || `已读取默认配方 ${defaultSelection.recipeId}，默认种子 ${defaultSelection.seed}。`} <Link to="/settings?section=channels" className="underline underline-offset-4">设置本地默认配方</Link></p>
+                <p className="text-xs leading-5 text-foreground/65">当前页面修改仅用于这一镜；核对镜头与参考图后手动提交。原生任务中心统一调度尚未接入。</p>
+                <label className="block space-y-1.5" htmlFor="local-comfy-recipe"><span className="text-sm">生成配方</span><AppSelect id="local-comfy-recipe" className="w-full" value={recipeId || undefined} placeholder="选择已登记配方" options={[...(recipeId && !recipe ? [{ value: recipeId, label: `${recipeId}（当前未登记）`, disabled: true }] : []), ...recipes.map((item) => ({ value: item.id, label: `${item.name}${item.ready ? "" : "（未配置）"}`, disabled: !item.ready }))]} onChange={(id) => { recipeTouched.current = true; setRecipeId(id); }} disabled={Boolean(busy)} /></label>
                 {recipe ? <p className="text-xs text-foreground/65">需要 {recipe.reference_slots} 张有序参考图；配方已配置不代表模型或 GPU 已验收。</p> : null}
                 {recipe?.reference_constraints?.map((constraint, index) => <p key={`${constraint.role}-${index}`} className="text-xs leading-5 text-foreground/65">{constraint.role === "first_frame" ? "场景首帧" : `参考图 ${index + 1}`}需 PNG，画幅比例与 {constraint.width} × {constraint.height} 相同，尺寸不小于此值。人物身份图应先用于生成场景首帧，不能直接拉伸成横版。</p>)}
                 <label className="block space-y-1.5" htmlFor="local-comfy-prompt"><span className="text-sm">镜头提示词</span><Input.TextArea id="local-comfy-prompt" value={prompt} onChange={(event) => { promptTouched.current = true; setPrompt(event.target.value); }} autoSize={{ minRows: 5, maxRows: 14 }} style={{ resize: "none" }} /></label>
-                <label className="block space-y-1.5" htmlFor="local-comfy-seed"><span className="text-sm">种子（0–4294967295）</span><Input id="local-comfy-seed" value={seed} inputMode="numeric" onChange={(event) => setSeed(event.target.value)} /></label>
+                <label className="block space-y-1.5" htmlFor="local-comfy-seed"><span className="text-sm">种子（0–4294967295）</span><Input id="local-comfy-seed" value={seed} inputMode="numeric" aria-invalid={Boolean(seedProblem)} aria-describedby={seedProblem ? "local-comfy-seed-error" : undefined} onChange={(event) => { seedTouched.current = true; setSeed(event.target.value); }} /></label>
+                {seedProblem ? <p id="local-comfy-seed-error" role="status" className="text-xs text-foreground/65">{seedProblem}</p> : null}
                 <label className="block space-y-1.5" htmlFor="local-comfy-references"><span className="text-sm">参考图（选择顺序即配方输入顺序）</span><AppSelect id="local-comfy-references" mode="multiple" className="w-full" value={references} options={referenceAssets.map((asset) => ({ value: asset.id, label: `${asset.name}${asset.width && asset.height ? ` · ${asset.width}×${asset.height}` : ""} · ${asset.kind}` }))} onChange={setReferences} disabled={Boolean(busy)} aria-invalid={Boolean(referenceProblem)} aria-describedby={referenceProblem ? "local-comfy-reference-error" : undefined} /></label>
                 {referenceProblem ? <p id="local-comfy-reference-error" className="text-xs text-foreground/65" role="status">{referenceProblem}</p> : null}
                 <div className="grid gap-2 sm:grid-cols-2"><label className="block space-y-1.5" htmlFor="local-comfy-reference-kind"><span className="text-sm">参考图类型</span><AppSelect id="local-comfy-reference-kind" className="w-full" value={referenceKind} options={[{ value: "reference", label: "参考图" }, { value: "character", label: "角色" }, { value: "scene", label: "场景" }, { value: "prop", label: "道具" }]} onChange={setReferenceKind} /></label><label className="block space-y-1.5" htmlFor="local-comfy-reference-asset"><span className="text-sm">原素材 ID（可选）</span><Input id="local-comfy-reference-asset" value={upstreamAssetId} onChange={(event) => setUpstreamAssetId(event.target.value)} /></label></div>
                 <label className="block space-y-1.5" htmlFor="local-comfy-file"><span className="text-sm">从本机选取参考图</span><input id="local-comfy-file" type="file" accept={recipe?.reference_constraints?.length ? "image/png" : "image/png,image/jpeg,image/webp"} disabled={Boolean(busy) || !projectId} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; upload(file); }} className="block w-full text-sm" /></label>
-                <Button type="primary" className="min-w-32" disabled={!config?.generation_enabled || !recipe?.ready || !projectId || !shotId || !prompt.trim() || Boolean(context.projectId && !matchesCanvas) || Boolean(busy) || references.length !== recipe?.reference_slots || Boolean(referenceProblem)} loading={busy === "提交任务"} onClick={() => void submit()}>生成当前镜头</Button>
+                <Button type="primary" className="min-w-32" disabled={!config?.generation_enabled || !recipe?.ready || !projectId || !shotId || !prompt.trim() || Boolean(context.projectId && !matchesCanvas) || Boolean(busy) || references.length !== recipe?.reference_slots || Boolean(referenceProblem) || Boolean(seedProblem) || defaultNeedsCorrection} loading={busy === "提交任务"} onClick={() => void submit()}>生成当前镜头</Button>
                 <details><summary className="cursor-pointer text-sm">项目剧本副本</summary><label htmlFor="local-comfy-script" className="mt-3 block space-y-1.5"><span className="text-xs text-foreground/65">保存到本地生成项目，原剧本编辑器内容不会被覆盖。</span><Input.TextArea id="local-comfy-script" value={script} onChange={(event) => setScript(event.target.value)} autoSize={{ minRows: 5, maxRows: 16 }} style={{ resize: "none" }} /></label><Button className="mt-2" disabled={!projectId || Boolean(busy)} onClick={() => void runAction("保存剧本副本", async (signal) => { const next = await saveLocalComfyScript(projectId, script, signal); setProjects((current) => current.map((project) => project.id === next.id ? next : project)); setNotice("剧本副本已保存到本地生成项目"); })}>保存剧本副本</Button></details>
             </section>
             <section className="min-w-0 space-y-3" aria-label="生成任务与结果"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-base font-semibold">镜头记录</h2><Button size="small" onClick={() => setAutoRefresh((current) => !current)}>{autoRefresh ? "暂停自动刷新" : "恢复自动刷新"}</Button></div><p className="text-xs leading-5 text-foreground/65">停止刷新不会取消 GPU 任务。提交结果待核验时，请核验原记录；界面不会重新提交。</p>

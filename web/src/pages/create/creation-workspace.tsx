@@ -380,6 +380,7 @@ type ComposerProps = {
     onPromptFocus: () => void;
     placeholderOverride?: string;
     onSubmit: () => void;
+    onOpenLocalWorkflow?: () => void;
 };
 
 type CreationReferenceFilter = "all" | "image" | "video" | "audio" | "file";
@@ -612,6 +613,7 @@ export function CreationComposer(props: ComposerProps) {
                     </button>
                 </Tooltip> : null}
 				<ModelPicker config={props.config} value={props.model} onChange={props.onModelChange} capability={props.mode} requirements={props.modelRequirements} className="creation-model-picker" placeholder={`选择${modeLabels[props.mode]}模型`} variant="creation" />
+                {props.mode !== "text" && props.onOpenLocalWorkflow ? <Tooltip title="打开保存的本地配方，在工作台核对镜头与参考图后手动生成"><button type="button" className="creation-chat-control" disabled={interactionBusy} onClick={props.onOpenLocalWorkflow} aria-label="打开本地工作流，核对后手动生成"><Clapperboard /><span>本地工作流</span></button></Tooltip> : null}
                 {props.mode === "video" || (props.mode === "image" && imageSettingsSupported) ? <GenerationSettingsMenu {...props} /> : null}
                 {props.mode === "video" ? <DurationMenu profile={props.videoProfile} seconds={props.seconds} onChange={props.setSeconds} /> : null}
                 {props.mode === "text" ? <>

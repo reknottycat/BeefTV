@@ -2,14 +2,17 @@ import { App, Button } from "antd";
 import { ArrowLeft, RadioTower } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
+import { useQuery } from "@tanstack/react-query";
 
 import { isBuiltinBeefAPIChannel, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { awaitModelConfigSaved } from "@/lib/channel-settings-actions";
-import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
+import { commitModelConfig, flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
 import { useUserStore } from "@/stores/use-user-store";
 import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, isChannelReady } from "./channel-settings-pane";
 import { ModelDefaultGrid } from "./model-default-grid";
 import { LocalComfySettingsPane } from "./local-comfy-settings-pane";
+import { localComfyDefaultsReady, localComfySeedProblem, normalizeLocalComfyDefaults, persistLocalComfyDefaultDraft, type LocalComfyDefaults } from "@/lib/local-comfy-defaults";
+import { listLocalComfyRecipes } from "@/services/api/local-comfy";
 
 type ConfigSectionKey = "channels" | "models";
 
@@ -32,6 +35,7 @@ export default function SettingsPage() {
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
+    const localRecipes = useQuery({ queryKey: ["local-comfy", "default-recipes"], queryFn: ({ signal }) => listLocalComfyRecipes(signal), retry: false, staleTime: 30_000 });
     const shouldPromptContinue = searchParams.get("continue") === "1";
     const [savingReturn, setSavingReturn] = useState(false);
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
@@ -59,12 +63,28 @@ export default function SettingsPage() {
         setSearchParams(next, { replace: true });
     };
 
+    const updateLocalDefaults = (defaults: LocalComfyDefaults) => {
+        void persistLocalComfyDefaultDraft(defaults, {
+            updateDefaults: (value) => updateConfig("localComfyDefaults", value),
+            readConfig: () => useConfigStore.getState().config,
+            commitConfig: commitModelConfig,
+        });
+    };
+
     const returnToCreation = async (requireReady: boolean) => {
         if (savingReturn) return;
-        if (requireReady && !effectiveConfig.channels.some((channel) => channel.enabled !== false && isChannelReady(channel))) {
+        const localDefaults = normalizeLocalComfyDefaults(effectiveConfig.localComfyDefaults);
+        const invalidSeedMode = (["image", "video"] as const).find((mode) => localDefaults[mode] && localComfySeedProblem(localDefaults[mode]!.seed));
+        if (requireReady && invalidSeedMode) {
+            message.error(localComfySeedProblem(localDefaults[invalidSeedMode]!.seed));
+            document.getElementById(`local-default-${invalidSeedMode}-seed`)?.focus();
+            return;
+        }
+        const localReady = localComfyDefaultsReady(localDefaults, localRecipes.data, localRecipes.isSuccess && !localRecipes.isFetching);
+        if (requireReady && !localReady && !effectiveConfig.channels.some((channel) => channel.enabled !== false && isChannelReady(channel))) {
             selectSection("channels");
             const invalidChannel = userChannels.find((channel) => !isBuiltinBeefAPIChannel(channel) && channelValidationError(channel));
-            message.error(customChannelsEnabled ? (invalidChannel ? `${invalidChannel.name || "未命名渠道"}：${channelValidationError(invalidChannel)}。请点击该渠道的“编辑”完成配置，或配置其他渠道。` : "请完成至少一个渠道的连接信息和模型配置；其他未完成草稿可继续保留。") : "当前没有可用的系统模型，请联系管理员配置系统渠道");
+            message.error(customChannelsEnabled ? (invalidChannel ? `${invalidChannel.name || "未命名渠道"}：${channelValidationError(invalidChannel)}。可完成该渠道，或选择已登记的本地默认配方。` : "请选择已登记的本地默认配方，或完成至少一个模型渠道；其他未完成草稿可继续保留。") : "请配置可用的本地工作流，或联系管理员配置系统渠道");
             if (invalidChannel) focusInvalidChannelField(invalidChannel);
             return;
         }
@@ -91,7 +111,7 @@ export default function SettingsPage() {
                             <h2>模型选择</h2>
                         </div>
                     </div>
-                    <ModelDefaultGrid config={effectiveConfig} onChange={(key, model) => updateConfig(key, model)} />
+                    <ModelDefaultGrid config={effectiveConfig} onChange={(key, model) => updateConfig(key, model)} onLocalDefaultsChange={updateLocalDefaults} />
                 </div>
             </SettingsPane>
         ),
@@ -104,7 +124,7 @@ export default function SettingsPage() {
                     </div>
                 </div>
                 <div className="settings-section">
-                            <ModelDefaultGrid config={effectiveConfig} onChange={(key, model) => updateConfig(key, model)} onOpenChannels={customChannelsEnabled ? () => selectSection("channels") : undefined} />
+                            <ModelDefaultGrid config={effectiveConfig} onChange={(key, model) => updateConfig(key, model)} onLocalDefaultsChange={updateLocalDefaults} onOpenChannels={customChannelsEnabled ? () => selectSection("channels") : undefined} />
                 </div>
             </SettingsPane>
         ),

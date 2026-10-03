@@ -264,12 +264,13 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 </div>
             )}
             <div className="ml-auto flex shrink-0 items-center justify-end gap-1">
-                {canExpandPrompt ? <Link
+                {canExpandPrompt && (mode === "image" || mode === "video") ? <Link
                     className="canvas-node-composer-header-action inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5"
-                    to={localComfyCanvasPath({ projectId, nodeId: node.id, shotId: node.metadata?.directorShotId })}
+                    to={localComfyCanvasPath({ projectId, nodeId: node.id, shotId: node.metadata?.directorShotId, mode })}
                     state={{ prompt, referenceAssetIds: activeReferences.map((reference) => reference.assetId).filter(Boolean) }}
-                    aria-label="打开当前镜头的本地生成工作台"
-                ><span className="text-[var(--fs-tiny)] font-medium">本地生成</span></Link> : null}
+                    aria-label="打开当前镜头的本地工作流，核对后手动生成"
+                    title={globalConfig.localComfyDefaults?.[mode]?.recipeId ? `使用默认配方 ${globalConfig.localComfyDefaults[mode]?.recipeId}，在工作台核对后手动生成` : "尚未配置本地默认配方，可在工作台手动选择"}
+                ><span className="text-[var(--fs-tiny)] font-medium">本地工作流</span></Link> : null}
             {canOptimizePrompt ? (
                 <Tooltip title="用 AI 润色提示词">
                     <button

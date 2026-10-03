@@ -1,7 +1,8 @@
 import type { LocalComfyJob, LocalComfyProject, LocalComfyShot } from "@/services/api/local-comfy";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
+import type { LocalComfyMode } from "@/lib/local-comfy-defaults";
 
-export type LocalComfyCanvasContext = { projectId: string; nodeId?: string; shotId?: string; prompt?: string; referenceAssetIds?: string[] };
+export type LocalComfyCanvasContext = { projectId: string; nodeId?: string; shotId?: string; prompt?: string; referenceAssetIds?: string[]; mode?: LocalComfyMode };
 
 type ProjectIdentity = Pick<LocalComfyProject, "upstream_project_id" | "canvas_project_id">;
 type CanvasIdentity = Pick<CanvasProject, "id" | "projectId">;
@@ -64,10 +65,12 @@ export async function loadMissingLocalComfyCanvas<T extends { id: string }>(id: 
 }
 
 export function localComfyCanvasPath(context: LocalComfyCanvasContext) {
-    const query = new URLSearchParams({ projectId: context.projectId });
+    const query = new URLSearchParams();
+    if (context.projectId) query.set("projectId", context.projectId);
     if (context.nodeId) query.set("nodeId", context.nodeId);
     if (context.shotId) query.set("shotId", context.shotId);
-    return `/local-comfy?${query}`;
+    if (context.mode) query.set("mode", context.mode);
+    return query.size ? `/local-comfy?${query}` : "/local-comfy";
 }
 
 export const localComfyJobActive = (status: string) => status === "submitting" || status === "submitted" || status === "running";

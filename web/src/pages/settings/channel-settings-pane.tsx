@@ -587,7 +587,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                     compact
                     title="暂无个人渠道"
                     action={
-                        <Button icon={<Plus className="size-4" />} onClick={addChannel}>
+                        <Button icon={<Plus className="size-4" />} onClick={() => addChannel()}>
                             新增渠道
                         </Button>
                     }

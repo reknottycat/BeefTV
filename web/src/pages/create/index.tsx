@@ -8,6 +8,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
 import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
+import { localComfyCanvasPath } from "@/pages/local-comfy/context";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
@@ -979,6 +980,7 @@ export default function CreatePage() {
         composerFocusRef,
         onPromptFocus: loadAddedSkills,
         onSubmit: () => void submit(),
+        onOpenLocalWorkflow: mode === "image" || mode === "video" ? () => navigate(localComfyCanvasPath({ projectId: "", mode }), { state: { prompt, referenceAssetIds: mentionReferences.filter((reference) => reference.active && reference.assetId).map((reference) => reference.assetId) } }) : undefined,
     };
 
 
