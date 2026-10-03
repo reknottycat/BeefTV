@@ -6,6 +6,7 @@ export type ModelConfigPersistenceState = {
     revision: number;
     dirty: boolean;
     error: string;
+    conflictRevision?: number;
 };
 
 type ModelConfigRepositoryDependencies = {
@@ -16,6 +17,8 @@ type ModelConfigRepositoryDependencies = {
 export function createModelConfigRepository(dependencies: ModelConfigRepositoryDependencies) {
     let state: ModelConfigPersistenceState = { status: "idle", revision: 0, dirty: false, error: "" };
     let hydrated = false;
+    let revisionConflict = false;
+    let canonicalReadFailed = false;
     let latestConfig: AiConfig | null = null;
     let generation = 0;
     let drainPromise: Promise<void> | null = null;
@@ -31,12 +34,20 @@ export function createModelConfigRepository(dependencies: ModelConfigRepositoryD
     };
 
     const hydrate = async () => {
+        const discardBlockedDraft = revisionConflict || canonicalReadFailed;
         publish({ status: "hydrating", error: "" });
         try {
             const result = await dependencies.read();
+            if (discardBlockedDraft) {
+                latestConfig = null;
+                generation += 1;
+            }
+            revisionConflict = false;
+            canonicalReadFailed = false;
             state = { status: "idle", revision: result.revision, dirty: Boolean(latestConfig), error: "" };
             return result;
         } catch (error) {
+            canonicalReadFailed = true;
             publish({ status: "error", error: error instanceof Error ? error.message : "读取模型配置失败" });
             throw error;
         } finally {
@@ -48,7 +59,7 @@ export function createModelConfigRepository(dependencies: ModelConfigRepositoryD
     };
 
     const runDrain = async () => {
-        while (hydrated && latestConfig && state.dirty) {
+        while (hydrated && latestConfig && state.dirty && !revisionConflict && !canonicalReadFailed) {
             const config = latestConfig;
             const savingGeneration = generation;
             publish({ status: "saving", error: "" });
@@ -57,15 +68,16 @@ export function createModelConfigRepository(dependencies: ModelConfigRepositoryD
                 state = { status: "saved", revision: result.revision, dirty: generation !== savingGeneration, error: "" };
             } catch (error) {
                 if (isRevisionConflict(error)) {
+                    // A fresh revision does not make this tab's old full snapshot
+                    // authoritative. Freeze writes until explicit canonical hydration.
+                    revisionConflict = true;
+                    let conflictRevision: number | undefined;
                     try {
                         const current = await dependencies.read();
-                        state = { ...state, revision: current.revision, status: "saving", dirty: true, error: "" };
-                        const retried = await dependencies.write(config, state.revision);
-                        state = { status: "saved", revision: retried.revision, dirty: generation !== savingGeneration, error: "" };
-                        continue;
-                    } catch (retryError) {
-                        error = retryError;
-                    }
+                        conflictRevision = current.revision;
+                    } catch { /* Conflict still blocks writes when the read is unavailable. */ }
+                    publish({ status: "error", dirty: true, conflictRevision, error: "其他页面已修改模型配置。本页编辑仍保留，已停止自动覆盖；请刷新读取最新配置后重新应用修改。" });
+                    return;
                 }
                 publish({ status: "error", dirty: true, error: error instanceof Error ? error.message : "保存模型配置失败" });
                 return;
@@ -75,6 +87,7 @@ export function createModelConfigRepository(dependencies: ModelConfigRepositoryD
     };
 
     const scheduleDrain = (): Promise<void> => {
+        if (revisionConflict || canonicalReadFailed) return Promise.resolve();
         if (!hydrated) return hydrationBarrier.then(scheduleDrain);
         if (!drainPromise) {
             drainPromise = runDrain().finally(() => {

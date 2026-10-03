@@ -13,6 +13,7 @@
   "provider": "local-comfy",
   "model": "local-comfy:qwen_image_2_1_preview512",
   "type": "canvas_image",
+  "prompt": "用户镜头提示词",
   "input": {
     "mode": "image",
     "prompt": "用户镜头提示词",

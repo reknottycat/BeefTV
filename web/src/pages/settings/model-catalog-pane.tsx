@@ -107,7 +107,7 @@ export function ModelCatalogPane() {
             </div>
             {data.total > 0 ? <PaginationBar current={query.page} pageSize={query.page_size} total={data.total} itemLabel="项" onChange={(page, pageSize) => update({ catalogPage: String(page), catalogPageSize: String(pageSize) })} /> : null}
         </> : null}
-        <p className="text-xs text-foreground/60">AI 应用社区浏览、个人工作流 ID 导入和 Comfy 权重资源库是不同目录，尚未接入此页。本页条目尚未接入项目默认模型和统一生成选择器。</p>
+        <p className="text-xs text-foreground/60">AI 应用社区浏览、个人工作流 ID 导入和 Comfy 权重资源库是不同目录，尚未接入此页。已登记的本地配方可在项目默认模型和图片、视频模型选择器中选择。</p>
         <Link to="/local-comfy" className="text-sm underline underline-offset-4">打开本地工作流工作台</Link>
     </section>;
 }

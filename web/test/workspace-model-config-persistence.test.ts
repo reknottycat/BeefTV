@@ -219,7 +219,7 @@ test("model config repository keeps failed edits dirty and retries them on flush
     expect(repository.getState()).toMatchObject({ status: "saved", dirty: false, revision: 2 });
 });
 
-test("model config repository refreshes revision after conflict and retries the local edit", async () => {
+test("model config repository reports a conflict without overwriting the fresh canonical snapshot", async () => {
     const expectedRevisions: number[] = [];
     let reads = 0;
     const repository = createModelConfigRepository({
@@ -236,8 +236,10 @@ test("model config repository refreshes revision after conflict and retries the 
     await repository.hydrate();
     await repository.commit({ ...defaultConfig, videoModel: "beefapi::seedance-new" });
 
-    expect(expectedRevisions).toEqual([2, 7]);
-    expect(repository.getState()).toMatchObject({ status: "saved", revision: 8, dirty: false });
+    expect(expectedRevisions).toEqual([2]);
+    expect(repository.getState()).toMatchObject({ status: "error", revision: 2, conflictRevision: 7, dirty: true });
+    await repository.flush();
+    expect(expectedRevisions).toEqual([2]);
 });
 
 test("catalog refresh keeps pending manual provider edits across delayed read and write", async () => {
