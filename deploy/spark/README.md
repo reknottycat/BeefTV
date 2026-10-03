@@ -29,7 +29,7 @@
    python3 -m unittest discover -s deploy/spark -p 'test_*.py'
    ```
 
-4. 获得所需依赖安装/构建授权且专项测试通过后，在 ARM64 主机分服务构建，再启动；镜像构建和程序运行均不调用 GPU：
+4. 已有 Docker 部署授权且专项测试通过后，在 ARM64 主机分服务构建，再启动；普通镜像恢复、锁定依赖构建和新空数据启动属于部署范围。若实际发现新未知依赖或来源、未审安装脚本、新显式协议或额外宿主权限，精确报告该缺项；镜像构建和程序运行均不调用 GPU：
 
    ```sh
    docker compose --env-file .local/spark.env -f deploy/spark/compose.yml build backend
