@@ -1,0 +1,4 @@
+interface:
+  display_name: "BeefTV Spark"
+  short_description: "通过 Spark BeefTV API 管理项目素材和本地生成任务，保留去重与结果核验"
+  default_prompt: "使用 $beeftv-spark 查询 Spark 上的项目与素材，并按已授权范围处理单镜任务。"

@@ -10,7 +10,7 @@ import { createChannelTransport } from "@/services/api/channel-transport";
 import { useConfigStore } from "@/stores/use-config-store";
 import { cacheResourceObjectUrl, getCachedResourceBlob, getCachedResourceObjectUrl, primeResourceBlobCache } from "@/services/resource-blob-cache";
 import { cleanupLocalMedia, deleteLocalMedia, getLocalMediaBlob, resolveLocalMediaUrl, saveLocalMedia, setLocalMediaBlob } from "@/services/local-media-repository";
-import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { requiresBackendLocalResourceStore, usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 
 export type UploadedFile = {
     url: string;
@@ -31,9 +31,10 @@ export type UploadedFile = {
     remoteUploadError?: string;
 };
 
-export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?: (uploadedBytes: number, totalBytes: number) => void): Promise<UploadedFile> {
+export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?: (uploadedBytes: number, totalBytes: number) => void, options?: { idempotencyKey?: string }): Promise<UploadedFile> {
     // 直传和失败后的本地同步必须复用同一上传身份，避免响应丢失后创建第二个对象。
     const storageKey = `${prefix}:${getActiveUserScope()}:${nanoid()}`;
+    const uploadIdentity = options?.idempotencyKey || storageKey;
     const localRuntime = isLocalRuntimeMode();
     const blob = input;
     const previewUrl = URL.createObjectURL(blob);
@@ -79,7 +80,7 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
         let poster: UploadedImage | undefined;
         if (captured?.poster) {
             try {
-                poster = await uploadImage(captured.poster);
+                poster = await uploadImage(captured.poster, undefined, options?.idempotencyKey ? { idempotencyKey: `${options.idempotencyKey}:poster` } : undefined);
             } catch (error) {
                 // 预览图失败不应把已经可用的视频降级成本地文件；视频本体仍按强校验上传。
                 console.warn("上传视频预览图失败，继续保存视频本体", { mimeType: blob.type, bytes: blob.size, error });
@@ -97,9 +98,9 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
         // Browser local mode keeps IndexedDB as its offline/development store.
         try {
             const kind = blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
-            const resource = await uploadResourceFile(blob, kind, { ...meta, fileName: input instanceof File ? input.name : undefined, idempotencyKey: storageKey }, onProgress);
+            const resource = await uploadResourceFile(blob, kind, { ...meta, fileName: input instanceof File ? input.name : undefined, idempotencyKey: uploadIdentity }, onProgress);
             try {
-                await primeResourceBlobCache(resourceStorageKey(resource.id), blob);
+                if (!requiresBackendLocalResourceStore()) await primeResourceBlobCache(resourceStorageKey(resource.id), blob);
             } catch (error) {
                 // 缓存只影响后续读取性能，服务端资源已经成功落盘，不得把缓存失败误报为上传失败。
                 console.warn("预热媒体缓存失败，服务端资源已保存", { resourceId: resource.id, error });
@@ -116,6 +117,7 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
                 preview: poster,
             };
         } catch (error) {
+            if (requiresBackendLocalResourceStore()) throw new Error(`后端媒体保存失败：${error instanceof Error ? error.message : "资源服务暂时不可用"}`);
             // 与图片上传同一套判定：永久性失败必须当场暴露，不能混进“稍后自动同步”。
             if (error instanceof ResourceUploadError && error.permanent) throw error;
             remoteUploadError = error instanceof Error ? error.message : "媒体直传失败";

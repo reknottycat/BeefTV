@@ -1,0 +1,29 @@
+name: ${BEEFTV_COMPOSE_PROJECT:-beeftv-spark}-migration-check
+
+services:
+  migration-check:
+    image: beeftv-spark-backend:${BEEFTV_RELEASE:?Set the tested candidate release tag}
+    platform: linux/arm64
+    user: ${BEEFTV_RUN_UID:-1000}:${BEEFTV_RUN_GID:-1000}
+    # A copied database can contain recoverable cloud tasks. No outbound
+    # networking is permitted during the migration-only candidate check.
+    network_mode: none
+    environment:
+      CANVAS_DATABASE_DRIVER: sqlite
+      CANVAS_BACKEND_DATA_DIR: /data
+      CANVAS_BACKEND_ADDR: :8080
+      CANVAS_AUTO_MIGRATE: "true"
+      CANVAS_SHUTDOWN_TIMEOUT: 2m
+      GOMAXPROCS: "2"
+    volumes:
+      - type: bind
+        source: ${BEEFTV_MIGRATION_DATA:?Set a separate backup-copy data directory}
+        target: /data
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs: [/tmp]
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 256
+    stop_grace_period: 150s

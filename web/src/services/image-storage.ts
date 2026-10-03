@@ -6,7 +6,7 @@ import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { importResourceFromUrl, isResourceUrl, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, ResourceUploadError, uploadResourceFile } from "@/services/api/resources";
 import { cacheResourceObjectUrl, getCachedResourceBlob, getCachedResourceObjectUrl, primeResourceBlobCache } from "@/services/resource-blob-cache";
-import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { requiresBackendLocalResourceStore, usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 
 export type UploadedImage = {
     url: string;
@@ -28,10 +28,11 @@ export type UploadedImage = {
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
 const objectUrls = new Map<string, string>();
 
-export async function uploadImage(input: string | Blob, onProgress?: (uploadedBytes: number, totalBytes: number) => void): Promise<UploadedImage> {
+export async function uploadImage(input: string | Blob, onProgress?: (uploadedBytes: number, totalBytes: number) => void, options?: { idempotencyKey?: string }): Promise<UploadedImage> {
     // 同一个逻辑上传在本地资源服务不可用后会退回 IndexedDB。
     // 提前生成稳定 key，确保恢复路径仍能定位同一份本地媒体。
     const storageKey = `image:${getActiveUserScope()}:${nanoid()}`;
+    const uploadIdentity = options?.idempotencyKey || storageKey;
     const localRuntime = isLocalRuntimeMode();
     if (!localRuntime && typeof input === "string" && shouldImportRemoteImage(input)) {
         try {
@@ -61,8 +62,8 @@ export async function uploadImage(input: string | Blob, onProgress?: (uploadedBy
     // as the canonical durable store in local mode; IndexedDB remains a safe
     // browser fallback when the backend is temporarily unavailable.
     try {
-        const resource = await uploadResourceFile(blob, "image", { width: meta.width, height: meta.height, fileName: input instanceof File ? input.name : undefined, idempotencyKey: storageKey }, onProgress);
-        await primeResourceBlobCache(resourceStorageKey(resource.id), blob).catch(() => "");
+        const resource = await uploadResourceFile(blob, "image", { width: meta.width, height: meta.height, fileName: input instanceof File ? input.name : undefined, idempotencyKey: uploadIdentity }, onProgress);
+        if (!requiresBackendLocalResourceStore()) await primeResourceBlobCache(resourceStorageKey(resource.id), blob).catch(() => "");
         URL.revokeObjectURL(previewUrl);
         return {
             url: resource.publicUrl || resourceFileUrl(resource.id),
@@ -73,6 +74,10 @@ export async function uploadImage(input: string | Blob, onProgress?: (uploadedBy
             mimeType: resource.mimeType || blob.type || meta.mimeType,
         };
     } catch (error) {
+        if (requiresBackendLocalResourceStore()) {
+            URL.revokeObjectURL(previewUrl);
+            throw new Error(`后端图片保存失败：${error instanceof Error ? error.message : "资源服务暂时不可用"}`);
+        }
         // 鉴权失效、越权、体积超限这类失败重传也是同样结果，不能退化成"稍后自动同步"。
         if (error instanceof ResourceUploadError && error.permanent) throw error;
         remoteUploadError = error instanceof Error ? error.message : "图片直传失败";

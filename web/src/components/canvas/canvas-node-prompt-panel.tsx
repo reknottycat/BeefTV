@@ -1,4 +1,6 @@
 import { Button, Image as AntImage, InputNumber, Modal, Popover } from "antd";
+import { Link } from "react-router";
+import { localComfyCanvasPath } from "@/pages/local-comfy/context";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ArrowLeftRight, ArrowUp, AtSign, Boxes, Camera, ChevronDown, FileText, GripVertical, ImageIcon, ImagePlus, Link2, LoaderCircle, Maximize2, Music2, Pencil, SlidersHorizontal, UserRound, Video, WandSparkles, X } from "lucide-react";
@@ -262,6 +264,12 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 </div>
             )}
             <div className="ml-auto flex shrink-0 items-center justify-end gap-1">
+                {canExpandPrompt ? <Link
+                    className="canvas-node-composer-header-action inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5"
+                    to={localComfyCanvasPath({ projectId, nodeId: node.id, shotId: node.metadata?.directorShotId })}
+                    state={{ prompt, referenceAssetIds: activeReferences.map((reference) => reference.assetId).filter(Boolean) }}
+                    aria-label="打开当前镜头的本地生成工作台"
+                ><span className="text-[var(--fs-tiny)] font-medium">本地生成</span></Link> : null}
             {canOptimizePrompt ? (
                 <Tooltip title="用 AI 润色提示词">
                     <button

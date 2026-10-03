@@ -1,0 +1,13 @@
+**
+!LICENSE
+!NOTICE
+!THIRD_PARTY_NOTICES.md
+!tools/
+!tools/comfy_adapter/
+!tools/comfy_adapter/*.py
+**/.local
+**/.env*
+**/__pycache__
+**/*.db
+**/*.sqlite*
+**/*.log

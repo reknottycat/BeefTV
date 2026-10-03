@@ -84,6 +84,10 @@ cd BeefTV
 
 详细环境要求、Windows 构建与本地开发方式见 [`QUICKSTART.md`](QUICKSTART.md) 和[桌面发布文档](docs/desktop-release.md)。首次启动后，添加自己的模型渠道即可开始创作。
 
+## 可选本地 ComfyUI 适配
+
+本分支增加独立 `/local-comfy` 入口，保留原剧本、画布、资产库和云渠道。生成默认关闭；部署前阅读[集成边界](docs/local-comfy-integration.md)、[接口合同](tools/comfy_adapter/CONTRACT.md)及 [Spark 容器部署](deploy/spark/README.md)。电脑端 API 操作见 [beeftv-spark 技能](skills/beeftv-spark/SKILL.md)，上游升级见[同步流程](docs/upstream-sync.md)。测试与真实生成的验真范围分别记录。
+
 ## 贡献与许可
 
 欢迎提交 Issue 和 Pull Request。开发流程与测试要求见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。

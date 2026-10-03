@@ -1,0 +1,14 @@
+FROM python:3.13-alpine
+ARG BUILD_COMMIT=unknown
+ARG SOURCE_REPOSITORY=https://github.com/glanderness/BeefTV
+LABEL org.opencontainers.image.source=${SOURCE_REPOSITORY} \
+      org.opencontainers.image.revision=${BUILD_COMMIT}
+RUN addgroup -g 1000 -S app && adduser -u 1000 -S app -G app
+WORKDIR /app
+COPY tools/comfy_adapter ./tools/comfy_adapter
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/beeftv/
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 BEEFTV_COMFY_ENABLE_GENERATION=0
+USER app
+EXPOSE 6007
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=5 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6007/api/local-comfy/v1/health', timeout=2).close()" || exit 1
+CMD ["python", "tools/comfy_adapter/server.py", "--host", "0.0.0.0", "--port", "6007", "--state-dir", "/state"]

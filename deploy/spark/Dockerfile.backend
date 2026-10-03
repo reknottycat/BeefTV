@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1.7
+FROM alpine:3.22 AS protocol-package-build
+RUN apk add --no-cache nodejs zip
+WORKDIR /src
+COPY plugin-packages ./plugin-packages
+RUN ./plugin-packages/build-packages.sh
+
+FROM golang:1.25-alpine AS backend-build
+ARG GOPROXY=https://proxy.golang.org,direct
+ARG BUILD_VERSION
+ARG BUILD_COMMIT=unknown
+ARG BUILD_TIME=unknown
+ENV GOPROXY=${GOPROXY} GOMAXPROCS=2
+RUN apk add --no-cache build-base
+WORKDIR /src/backend
+COPY VERSION /src/VERSION
+COPY backend/go.mod backend/go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY backend ./
+RUN --mount=type=cache,target=/root/.cache/go-build set -eu; \
+    version="${BUILD_VERSION:-$(tr -d '\r\n' </src/VERSION)}"; \
+    ldflags="-s -w -X infinite-canvas/backend/internal/buildinfo.Version=${version} -X infinite-canvas/backend/internal/buildinfo.Commit=${BUILD_COMMIT} -X infinite-canvas/backend/internal/buildinfo.BuildTime=${BUILD_TIME}"; \
+    CGO_ENABLED=1 GOOS=linux go build -p 2 -trimpath -ldflags="$ldflags" -o /out/beeftv-backend ./cmd/server
+
+FROM alpine:3.22
+ARG BUILD_COMMIT=unknown
+ARG SOURCE_REPOSITORY=https://github.com/glanderness/BeefTV
+LABEL org.opencontainers.image.source=${SOURCE_REPOSITORY} \
+      org.opencontainers.image.revision=${BUILD_COMMIT}
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && addgroup -g 1000 -S app && adduser -u 1000 -S app -G app
+WORKDIR /app
+COPY --from=backend-build /out/beeftv-backend /usr/local/bin/beeftv-backend
+COPY --from=protocol-package-build /src/plugin-packages /app/plugin-packages
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/beeftv/
+ENV GIN_MODE=release CANVAS_BACKEND_ADDR=:8080 CANVAS_BACKEND_DATA_DIR=/data GOMAXPROCS=2
+USER app
+EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=5 CMD wget -qO- http://127.0.0.1:8080/api/health/ready >/dev/null || exit 1
+CMD ["beeftv-backend"]

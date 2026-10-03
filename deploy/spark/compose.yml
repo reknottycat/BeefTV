@@ -1,0 +1,100 @@
+name: ${BEEFTV_COMPOSE_PROJECT:-beeftv-spark}
+
+services:
+  backend:
+    image: beeftv-spark-backend:${BEEFTV_RELEASE:?Set a unique tested release tag}
+    platform: linux/arm64
+    build:
+      context: ../..
+      dockerfile: deploy/spark/Dockerfile.backend
+      args:
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+        BUILD_COMMIT: ${BEEFTV_COMMIT:?Set the full source commit}
+        BUILD_TIME: ${BEEFTV_BUILD_TIME:-unknown}
+        BUILD_VERSION: ${BEEFTV_VERSION:-}
+        SOURCE_REPOSITORY: ${BEEFTV_SOURCE_REPOSITORY:-https://github.com/glanderness/BeefTV}
+    user: ${BEEFTV_RUN_UID:-1000}:${BEEFTV_RUN_GID:-1000}
+    environment:
+      CANVAS_DATABASE_DRIVER: sqlite
+      CANVAS_BACKEND_DATA_DIR: /data
+      CANVAS_BACKEND_ADDR: :8080
+      CANVAS_AUTO_MIGRATE: ${BEEFTV_AUTO_MIGRATE:-true}
+      CANVAS_CORS_ORIGINS: ${BEEFTV_ORIGIN:?Set the browser origin}
+      CANVAS_SHUTDOWN_TIMEOUT: 2m
+      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${BEEFTV_CLOUD_PRIVATE_HOSTS:-}
+      GOMAXPROCS: "2"
+    volumes:
+      - type: bind
+        source: ${BEEFTV_BACKEND_DATA:?Set a persistent absolute backend data path}
+        target: /data
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs: [/tmp]
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 256
+    restart: unless-stopped
+    stop_grace_period: 150s
+
+  comfy-adapter:
+    image: beeftv-spark-comfy:${BEEFTV_RELEASE:?Set a unique tested release tag}
+    platform: linux/arm64
+    build:
+      context: ../..
+      dockerfile: deploy/spark/Dockerfile.adapter
+      args:
+        BUILD_COMMIT: ${BEEFTV_COMMIT:?Set the full source commit}
+        SOURCE_REPOSITORY: ${BEEFTV_SOURCE_REPOSITORY:-https://github.com/glanderness/BeefTV}
+    user: ${BEEFTV_RUN_UID:-1000}:${BEEFTV_RUN_GID:-1000}
+    environment:
+      BEEFTV_COMFY_URL: ${BEEFTV_COMFY_URL:?Set the existing ComfyUI endpoint}
+      BEEFTV_COMFY_RECIPES: /recipes/recipes.json
+      BEEFTV_COMFY_STATE_DIR: /state
+      BEEFTV_COMFY_ENABLE_GENERATION: ${BEEFTV_COMFY_ENABLE_GENERATION:-0}
+    volumes:
+      - type: bind
+        source: ${BEEFTV_COMFY_STATE:?Set a persistent absolute adapter state path}
+        target: /state
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${BEEFTV_COMFY_RECIPES_DIR:?Set the private recipes directory}
+        target: /recipes
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs: [/tmp]
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 128
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  web:
+    image: beeftv-spark-web:${BEEFTV_RELEASE:?Set a unique tested release tag}
+    platform: linux/arm64
+    build:
+      context: ../..
+      dockerfile: deploy/spark/Dockerfile.web
+      args:
+        BUILD_COMMIT: ${BEEFTV_COMMIT:?Set the full source commit}
+        BUILD_VERSION: ${BEEFTV_VERSION:-}
+        SOURCE_REPOSITORY: ${BEEFTV_SOURCE_REPOSITORY:-https://github.com/glanderness/BeefTV}
+    ports:
+      - ${BEEFTV_BIND_ADDRESS:?Set an authorized private interface}:${BEEFTV_PORT:-8190}:3000
+    depends_on:
+      backend:
+        condition: service_healthy
+      comfy-adapter:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp, /var/cache/nginx, /var/run]
+    cpus: 1.0
+    mem_limit: 256m
+    pids_limit: 128
+    restart: unless-stopped
+
+# No GPU device requests, ComfyUI service, model mounts, PostgreSQL, or Redis.
+# Only the private-address web port is published; the two APIs stay internal.
