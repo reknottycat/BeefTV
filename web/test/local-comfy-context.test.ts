@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { localComfyCanvasPath, localComfyJobActive, localComfyJobRetryable, localComfyReferenceProblem, localComfySeed } from "./context";
+import { localComfyCanvasPath, localComfyJobActive, localComfyJobRetryable, localComfyReferenceProblem, localComfySeed } from "../src/pages/local-comfy/context";
 
 describe("local Comfy workflow boundaries", () => {
     test("canvas handoff keeps private prompt and reference data out of the URL", () => {

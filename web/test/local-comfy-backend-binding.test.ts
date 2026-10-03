@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Asset } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasNodeData } from "@/types/canvas";
-import { bindLocalComfyBackendResult } from "./backend-binding";
+import { bindLocalComfyBackendResult } from "../src/pages/local-comfy/backend-binding";
 
 const context = { projectId: "canvas-1", nodeId: "source-1", shotId: "director-shot-1" };
 const copy = <T,>(value: T): T => structuredClone(value);
