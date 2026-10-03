@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { FullScreenLoader } from "@/components/ui/aceternity/full-screen-loader";
 import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
@@ -11,6 +11,7 @@ import { useUserStore } from "@/stores/use-user-store";
 
 export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }) {
     const hydrated = useUserStore((state) => state.hydrated);
+    const [initialized, setInitialized] = useState(false);
     const modelConfigReady = useRef(false);
 
     useEffect(() => {
@@ -27,13 +28,16 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
             restoreModelConfig: hydrateLocalModelConfig,
         })
             .then(() => {
+                if (cancelled) return;
                 modelConfigReady.current = true;
-                if (!cancelled) preloadWorkspaceRoute(window.location.pathname);
+                setInitialized(true);
+                preloadWorkspaceRoute(window.location.pathname);
             })
             .catch(() => {
                 if (cancelled) return;
                 modelConfigReady.current = true;
                 useUserStore.getState().setHydrated(true);
+                setInitialized(true);
             });
         return () => {
             cancelled = true;
@@ -58,7 +62,11 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
         };
     }, []);
 
-    return hydrated ? children : <FullScreenLoader label="正在准备本地工作区" detail="加载项目、画布与模型配置" />;
+    return workspaceBootstrapReady(hydrated, initialized) ? children : <FullScreenLoader label="正在准备本地工作区" detail="加载项目、画布与模型配置" />;
+}
+
+export function workspaceBootstrapReady(hydrated: boolean, initialized: boolean) {
+    return hydrated && initialized;
 }
 
 export async function initializeWorkspaceState<T>({

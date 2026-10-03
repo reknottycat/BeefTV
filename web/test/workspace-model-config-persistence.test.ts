@@ -6,6 +6,63 @@ import { mergeManagedBeefAPICatalog } from "../src/pages/settings/channel-settin
 import { createModelChannel, defaultConfig, type AiConfig } from "../src/stores/use-config-store";
 import { createModelConfigRepository } from "../src/services/model-config-repository";
 
+test("editable workspace stays gated while canonical config arrives after the browser session", async () => {
+    const state = { hydrated: false, initialized: false, selection: "browser-preview" };
+    let finishRestore!: () => void;
+    let announceRestore!: () => void;
+    const restoreStarted = new Promise<void>((resolve) => { announceRestore = resolve; });
+    const canonicalRestore = new Promise<void>((resolve) => { finishRestore = resolve; });
+    const initializing = workspaceBootstrap.initializeWorkspaceState({
+        loadWorkspace: async () => ({ source: "local" }),
+        createLocalWorkspace: () => ({ source: "local" }),
+        applySession: async () => { state.hydrated = true; },
+        restoreModelConfig: async () => {
+            announceRestore();
+            await canonicalRestore;
+            state.selection = "canonical-qwen-default";
+        },
+    }).then(() => { state.initialized = true; });
+
+    await restoreStarted;
+    expect(state.hydrated).toBe(true);
+    expect(state.selection).toBe("browser-preview");
+    expect(state.initialized).toBe(false);
+    expect(workspaceBootstrap.workspaceBootstrapReady(state.hydrated, state.initialized)).toBe(false);
+
+    finishRestore();
+    await initializing;
+    expect(state.selection).toBe("canonical-qwen-default");
+    expect(workspaceBootstrap.workspaceBootstrapReady(state.hydrated, state.initialized)).toBe(true);
+    expect(workspaceBootstrap.workspaceBootstrapReady(false, state.initialized)).toBe(false);
+});
+
+test("startup recovery finishes only after the pending canonical restore fails", async () => {
+    const state = { hydrated: false, initialized: false, recovered: false };
+    let failRestore!: (error: Error) => void;
+    let announceRestore!: () => void;
+    const restoreStarted = new Promise<void>((resolve) => { announceRestore = resolve; });
+    const canonicalRestore = new Promise<void>((_resolve, reject) => { failRestore = reject; });
+    const initializing = workspaceBootstrap.initializeWorkspaceState({
+        loadWorkspace: async () => { throw new Error("mock backend starting"); },
+        createLocalWorkspace: () => ({ source: "local" }),
+        applySession: async () => { state.hydrated = true; },
+        restoreModelConfig: async () => { announceRestore(); await canonicalRestore; },
+    }).catch(() => {
+        state.recovered = true;
+        state.hydrated = true;
+        state.initialized = true;
+    });
+
+    await restoreStarted;
+    expect(state.hydrated).toBe(true);
+    expect(state.recovered).toBe(false);
+    expect(workspaceBootstrap.workspaceBootstrapReady(state.hydrated, state.initialized)).toBe(false);
+    failRestore(new Error("mock canonical config unavailable"));
+    await initializing;
+    expect(state.recovered).toBe(true);
+    expect(workspaceBootstrap.workspaceBootstrapReady(state.hydrated, state.initialized)).toBe(true);
+});
+
 test("local-mode startup restores the local model config after the session", async () => {
     const initialize = (workspaceBootstrap as Record<string, unknown>).initializeWorkspaceState as undefined | ((input: {
         loadWorkspace: () => Promise<{ source: string }>;
