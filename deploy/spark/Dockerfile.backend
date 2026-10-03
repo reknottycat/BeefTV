@@ -17,7 +17,7 @@ COPY VERSION /src/VERSION
 COPY backend/go.mod backend/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY backend ./
-RUN --mount=type=cache,target=/root/.cache/go-build set -eu; \
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build set -eu; \
     version="${BUILD_VERSION:-$(tr -d '\r\n' </src/VERSION)}"; \
     ldflags="-s -w -X infinite-canvas/backend/internal/buildinfo.Version=${version} -X infinite-canvas/backend/internal/buildinfo.Commit=${BUILD_COMMIT} -X infinite-canvas/backend/internal/buildinfo.BuildTime=${BUILD_TIME}"; \
     CGO_ENABLED=1 GOOS=linux go build -p 2 -trimpath -ldflags="$ldflags" -o /out/beeftv-backend ./cmd/server
