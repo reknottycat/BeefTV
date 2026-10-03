@@ -24,6 +24,13 @@ export function localComfyRegisteredModel(value: string) {
     return recipeId && Object.prototype.hasOwnProperty.call(registered, recipeId) ? registered[recipeId as keyof typeof registered] : undefined;
 }
 
+export function localComfyReferenceVideoOperation(value: string, operation: string | undefined, input: { imageCount: number; characterCount: number; videoCount: number; audioCount: number }) {
+    // A bound single frame is I2V for the registered local recipe, not multimodal input.
+    return localComfyRegisteredModel(value)?.mode === "i2v" && operation === "reference_to_video"
+        && input.imageCount + input.characterCount === 1 && input.videoCount === 0 && input.audioCount === 0
+        ? "image_to_video" : operation;
+}
+
 // Runtime metadata comes from the fixed same-origin adapter. It never creates a
 // cloud channel, and directory entries outside this integration are not enabled.
 export function validatedLocalComfyRecipes(recipes: readonly LocalComfyRecipe[]): LocalComfyRecipe[] {

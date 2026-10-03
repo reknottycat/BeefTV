@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeLocalComfyModel, encodeLocalComfyModel, isLocalComfyModel, localComfyGenerationProblem, localComfyModelCapabilityConfig, localComfyModelFor, localComfyModelProblem, localComfySelectableModels, validatedLocalComfyRecipes } from "../src/lib/local-comfy-models";
+import { decodeLocalComfyModel, encodeLocalComfyModel, isLocalComfyModel, localComfyGenerationProblem, localComfyModelCapabilityConfig, localComfyModelFor, localComfyModelProblem, localComfyReferenceVideoOperation, localComfySelectableModels, validatedLocalComfyRecipes } from "../src/lib/local-comfy-models";
 import type { LocalComfyRecipe } from "../src/services/api/local-comfy";
 
 const recipes: LocalComfyRecipe[] = [
@@ -64,6 +64,21 @@ describe("native local Comfy model contracts", () => {
         expect(video.ratios).toEqual(["864x480"]);
         expect(video.resolutions).toEqual(["480p"]);
         expect(video.generateAudio.supported).toBe(false);
+    });
+    test("only registered single-frame I2V maps generic bound references to its actual operation", () => {
+        const input = { imageCount: 1, characterCount: 0, videoCount: 0, audioCount: 0 };
+        const model = "local-comfy:h3_i2v_turbo4";
+        expect(localComfyReferenceVideoOperation(model, "reference_to_video", input)).toBe("image_to_video");
+        expect(localComfyReferenceVideoOperation(model, "reference_to_video", { ...input, imageCount: 0, characterCount: 1 })).toBe("image_to_video");
+        for (const value of ["cloud::h3_i2v_turbo4", "local-comfy:removed", "local-comfy:qwen_image_2_1"]) {
+            expect(localComfyReferenceVideoOperation(value, "reference_to_video", input)).toBe("reference_to_video");
+        }
+        for (const invalid of [{ ...input, imageCount: 0 }, { ...input, imageCount: 2 }, { ...input, characterCount: 1 }, { ...input, videoCount: 1 }, { ...input, audioCount: 1 }]) {
+            expect(localComfyReferenceVideoOperation(model, "reference_to_video", invalid)).toBe("reference_to_video");
+        }
+        for (const operation of [undefined, "image_to_video", "text_to_video", "extend", "inpaint", "audio_to_video"]) {
+            expect(localComfyReferenceVideoOperation(model, operation, input)).toBe(operation);
+        }
     });
     test("reference constraints survive catalog projection without mutating the source", () => {
         const before = JSON.stringify(recipes);

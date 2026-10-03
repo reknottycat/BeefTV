@@ -37,7 +37,7 @@ import {
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { skillRuntime } from "@/services/skill-runtime";
 import { modelDisplayName, modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelProblem, localComfyModelSummary } from "@/lib/local-comfy-models";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelProblem, localComfyModelSummary, localComfyReferenceVideoOperation } from "@/lib/local-comfy-models";
 import { projectGenerationModel } from "@/lib/project-generation-model-defaults";
 import { SkillRuntimePicker, useSkillRuntimeCatalog } from "@/components/skills/skill-runtime-picker";
 
@@ -132,17 +132,18 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const currentDurationSeconds = Number(watchedDuration || Math.max(0.5, (selectedShot?.durationMs || 3000) / 1000));
     const generationSeconds = String(Math.max(1, Math.round(currentDurationSeconds)));
     const generationReferenceAudios = generationCapability === "video" ? shotAssetReferenceContext.referenceAudios : [];
-    const videoEditOperation = generationCapability === "video" && shotAssetReferenceContext.referenceImages.length ? "reference_to_video" : undefined;
+    const generationInput = useMemo(() => ({ textCount: 1, imageCount: shotAssetReferenceContext.referenceImages.length, videoCount: 0, audioCount: generationReferenceAudios.length, characterCount: 0 }), [generationReferenceAudios.length, shotAssetReferenceContext.referenceImages.length]);
+    const videoEditOperation = localComfyReferenceVideoOperation(selectedModel, generationCapability === "video" && generationInput.imageCount ? "reference_to_video" : undefined, generationInput);
     const modelRequirements = useMemo<ModelRequirements>(() => ({
         capability: generationCapability,
-        input: { textCount: 1, imageCount: shotAssetReferenceContext.referenceImages.length, videoCount: 0, audioCount: generationReferenceAudios.length, characterCount: 0 },
+        input: generationInput,
         videoOperation: videoEditOperation,
         videoSeconds: generationCapability === "video" ? generationSeconds : undefined,
         imageSize: generationCapability === "image" ? aspectRatio : undefined,
         options: generationCapability === "video"
             ? { size: aspectRatio, vquality: resolution, videoSeconds: Number(generationSeconds) }
             : { size: aspectRatio, quality: imageQuality },
-    }), [aspectRatio, generationCapability, generationReferenceAudios.length, generationSeconds, imageQuality, resolution, shotAssetReferenceContext.referenceImages.length, videoEditOperation]);
+    }), [aspectRatio, generationCapability, generationInput, generationSeconds, imageQuality, resolution, videoEditOperation]);
     const routedModel = isLocalComfyModel(selectedModel) ? selectedModel : resolveCompatibleModel(effectiveConfig, selectedModel, modelRequirements) || selectedModel;
     const localModel = isLocalComfyModel(routedModel);
     const activeProfile = useMemo(() => modelCapabilityConfigFor(effectiveConfig, routedModel), [effectiveConfig, routedModel]);
@@ -343,7 +344,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                     artifactType,
                     role: "output",
                     source: "short-drama-workflow",
-                    ...(mode === "video" && shotAssetReferenceContext.referenceImages.length ? { videoEditOperation: "reference_to_video" } : {}),
+                    ...(videoEditOperation ? { videoEditOperation } : {}),
                     resolvedCharacterVersions: shotAssetReferenceContext.resolvedCharacterVersions,
                     artifactMetadata: { model: routedModel, aspectRatio: localModel ? imageProfile?.size.default || videoProfile?.defaultRatio : aspectRatio, resolution: localModel ? videoProfile?.defaultResolution || imageProfile?.size.default : resolution, durationSeconds: localModel && generationCapability === "video" ? videoProfile?.duration.default : values.durationSeconds, ...skillExecution.metadata },
                 },

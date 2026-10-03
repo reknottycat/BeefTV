@@ -1,7 +1,7 @@
 import { defaultImageCapabilityConfig, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageSizePresets } from "@/lib/image-size-presets";
-import { isLocalComfyModel, localComfyModelCapabilityConfig, localComfyModelDisplayName, localComfyModelProblem } from "@/lib/local-comfy-models";
+import { isLocalComfyModel, localComfyModelCapabilityConfig, localComfyModelDisplayName, localComfyModelProblem, localComfyReferenceVideoOperation } from "@/lib/local-comfy-models";
 import { modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 export type ModelInputSummary = {
@@ -96,7 +96,7 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
         // Choose an I2V model before adding its required first frame. Submission
         // checks the exact required reference count; the picker checks excess.
         if (isLocalComfyModel(model) && !visualInputCount && !input.videoCount && !input.audioCount) return "";
-        const operation = resolveVideoOperation(input, requirements.videoOperation);
+        const operation = resolveVideoOperation(input, localComfyReferenceVideoOperation(model, requirements.videoOperation, input));
         if (operation !== "concat" && !profile.operations.includes(operation)) return `不支持${videoOperationLabel(operation)}`;
         return "";
     }

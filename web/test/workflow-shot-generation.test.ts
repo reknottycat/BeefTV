@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 
-import { createModelChannel, defaultConfig, encodeChannelModel } from "../src/stores/use-config-store";
-import { submitBackendGenerationTask, type GenerationTaskDependencies } from "../src/services/api/generation-task";
+import { createModelChannel, defaultConfig, encodeChannelModel, selectableModelsByCapability } from "../src/stores/use-config-store";
+import { compatibleModelInGroup, groupModelsByDisplayName, modelCompatibilityError, type ModelRequirements } from "../src/lib/model-selection";
+import { modelCapabilityConfigFor } from "../src/lib/model-capabilities";
+import { localComfyReferenceVideoOperation } from "../src/lib/local-comfy-models";
+import { prepareBackendGenerationTask, submitBackendGenerationTask, type GenerationTaskDependencies } from "../src/services/api/generation-task";
 import type { GenerationTask } from "../src/services/api/task-center";
 import type { ProjectDetail } from "../src/services/api/projects";
 import { buildShotAssetReferenceContext, resolveShotAssetMentionPrompt } from "../src/pages/projects/detail/workflow-shot-references";
@@ -19,6 +22,68 @@ function videoTaskConfig() {
     const model = encodeChannelModel(channel.id, "MiniMax-H3");
     return { ...defaultConfig, channels: [channel], model, videoModel: model };
 }
+
+function boundFirstFrameWorkflow() {
+    const detail = {
+        assets: [{ id: "TEST-first-frame", title: "TEST PNG first frame", category: "environment", mediaType: "image", primaryVersionId: "TEST-first-frame-version", storageKey: "resource:TEST-first-frame" }],
+        shotReferences: [{ shotId: "TEST-shot", assetVersionId: "TEST-first-frame-version", status: "linked" }],
+    } as ProjectDetail;
+    const context = buildShotAssetReferenceContext(detail, "TEST-shot");
+    const requirements: ModelRequirements = {
+        capability: "video",
+        input: { textCount: 1, imageCount: context.referenceImages.length, videoCount: 0, audioCount: context.referenceAudios.length, characterCount: 0 },
+        videoOperation: context.referenceImages.length ? "reference_to_video" : undefined,
+        videoSeconds: "5",
+        options: { size: "16:9", vquality: "720", videoSeconds: 5 },
+    };
+    const cloudConfig = videoTaskConfig();
+    const cloudCapabilities = { ...modelCapabilityConfigFor(cloudConfig, cloudConfig.model) };
+    cloudCapabilities.video = { ...cloudCapabilities.video!, operations: ["image_to_video"] };
+    const config = {
+        ...cloudConfig,
+        channels: cloudConfig.channels.map((channel) => ({ ...channel, modelProfiles: channel.modelProfiles?.map((profile) => ({ ...profile, capabilityConfig: cloudCapabilities })) })),
+        localComfyModels: [{ id: "h3_i2v_turbo4", name: "H3", mode: "i2v", ready: true, reference_slots: 1, reference_constraints: [{ role: "first_frame", width: 864, height: 480, mime_types: ["image/png"] }] }],
+        localComfyGenerationEnabled: true,
+    };
+    return { context, requirements, config };
+}
+
+test("ModelPicker accepts the native H3 bound single frame even when the selected default is cloud", () => {
+    const { context, requirements, config } = boundFirstFrameWorkflow();
+    const model = "local-comfy:h3_i2v_turbo4";
+    expect(context.referenceImages[0]?.storageKey).toBe("resource:TEST-first-frame");
+    expect(config.model.startsWith("local-comfy:")).toBe(false);
+    expect(requirements).toMatchObject({ videoOperation: "reference_to_video", videoSeconds: "5", options: { size: "16:9", vquality: "720", videoSeconds: 5 } });
+    const group = groupModelsByDisplayName(config, selectableModelsByCapability(config, "video")).find((candidate) => candidate.models.includes(model));
+    expect(group).toBeDefined();
+    expect(modelCompatibilityError(config, model, requirements)).toBe("");
+    const pickerRequirements = { ...requirements, videoSeconds: undefined, imageSize: undefined, options: undefined };
+    expect(compatibleModelInGroup(config, group!.models, pickerRequirements, config.model)).toBe(model);
+});
+
+test("H3 picker still rejects multiple visual inputs, video and audio while cloud keeps its requested operation", () => {
+    const { requirements, config } = boundFirstFrameWorkflow();
+    const model = "local-comfy:h3_i2v_turbo4";
+    for (const input of [{ ...requirements.input!, imageCount: 2 }, { ...requirements.input!, characterCount: 1 }, { ...requirements.input!, videoCount: 1 }, { ...requirements.input!, audioCount: 1 }]) {
+        const excessive = { ...requirements, input };
+        expect(modelCompatibilityError(config, model, excessive)).not.toBe("");
+        expect(compatibleModelInGroup(config, [model], excessive)).toBe("");
+    }
+    expect(modelCompatibilityError(config, config.model, { ...requirements, videoSeconds: undefined, options: undefined })).toContain("不支持全模态参考");
+});
+
+test("bound H3 task metadata reuses the same single-frame operation accepted by the picker", async () => {
+    const { context, requirements, config } = boundFirstFrameWorkflow();
+    const model = "local-comfy:h3_i2v_turbo4";
+    const operation = localComfyReferenceVideoOperation(model, requirements.videoOperation, requirements.input!);
+    const mappedRequirements = { ...requirements, videoOperation: operation };
+    expect(operation).toBe("image_to_video");
+    expect(compatibleModelInGroup(config, [model], mappedRequirements)).toBe(model);
+    const task = await prepareBackendGenerationTask({ projectId: "TEST-project", mode: "video", prompt: "TEST frame animation", config: { ...config, model, videoModel: model }, clientOperationId: "TEST-H3-operation", referenceImages: context.referenceImages, referenceAudios: context.referenceAudios, metadata: { shotId: "TEST-shot", videoEditOperation: operation } });
+    expect(task.operation).toBe("image_to_video");
+    expect(task.input?.metadata).toMatchObject({ shotId: "TEST-shot", videoEditOperation: "image_to_video", clientOperationId: "TEST-H3-operation" });
+    expect(task.input?.referenceImages).toMatchObject([{ storageKey: "resource:TEST-first-frame", type: "image/*" }]);
+});
 
 test("production workbench does not silently drop bound voice samples before backend validation", async () => {
     const source = await Bun.file(new URL("../src/pages/projects/detail/workflow-production-workbench.tsx", import.meta.url)).text();
