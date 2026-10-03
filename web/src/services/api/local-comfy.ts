@@ -1,4 +1,6 @@
-import { apiBaseURL, http } from "@/services/api/request";
+import { ApiError, apiBaseURL, http } from "@/services/api/request";
+import type { Asset } from "@/stores/use-asset-store";
+import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
 const BASE = "/local-comfy/v1";
 const TIMEOUT = 15_000;
@@ -33,3 +35,19 @@ export async function readLocalComfyAssetBlob(id: string, signal?: AbortSignal) 
     return result.data;
 }
 export const localComfyAssetContentUrl = (id: string) => `${String(apiBaseURL).replace(/\/$/, "")}${BASE}/assets/${encodeURIComponent(id)}/content`;
+
+export type LocalComfyCanvasSave = Pick<CanvasProject, "id" | "title" | "createdAt" | "updatedAt"> & { revision: number };
+export async function getLocalComfyBackendCanvas(id: string, signal?: AbortSignal) {
+    return (await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`, options(signal))).project;
+}
+export async function getLocalComfyBackendAsset(id: string, signal?: AbortSignal) {
+    try {
+        return (await http.get<{ asset: Asset }>(`/assets/${encodeURIComponent(id)}`, options(signal))).asset;
+    } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+    }
+}
+export async function commitLocalComfyBackendResult(project: CanvasProject, asset: Asset, signal?: AbortSignal) {
+    return (await http.put<{ project: LocalComfyCanvasSave }>(`/canvas-projects/${encodeURIComponent(project.id)}/generated-assets`, { project, assets: [asset] }, options(signal))).project;
+}

@@ -2,6 +2,7 @@ import { Alert, Button, Input, Select as AppSelect, Tag } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
 
+import { createClientId } from "@/lib/client-id";
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { requiresBackendLocalResourceStore } from "@/services/workspace-resource-storage";
@@ -11,7 +12,7 @@ import { localComfyJobActive, localComfyJobRetryable, localComfyReferenceProblem
 
 const isAbort = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
 const errorText = (error: unknown) => error instanceof Error ? error.message : "请求未完成，请刷新记录后重试";
-const requestKey = () => crypto.randomUUID();
+const requestKey = createClientId;
 
 async function fileBase64(file: File) {
     return new Promise<string>((resolve, reject) => {
