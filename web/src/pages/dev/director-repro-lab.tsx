@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Table } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 
@@ -10,9 +10,10 @@ import { resetDirectorDiagnosticDedupe } from "@/lib/canvas/director/director-di
 import { getClientDiagnosticEvents } from "@/services/diagnostics/client-diagnostics";
 import { StatusBadge } from "@/components/ui/base/badges";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { useThemeStore } from "@/stores/use-theme-store";
 import type { DirectorScene, DirectorSceneOutput } from "@/types/director";
 
-type DirectorOutputSummary = { beauty: string; clayVideo: string };
+type DirectorOutputSummary = { beauty: string; clayVideo: string; previewUrl: string };
 const panoramaFixtureSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="800" height="400" fill="#e33"/><rect x="400" width="400" height="400" fill="#38f"/></svg>';
 const panoramaFixtureUrl = `data:image/svg+xml;base64,${btoa(panoramaFixtureSvg)}`;
 
@@ -65,6 +66,9 @@ export default function DirectorReproLab() {
     const [forceSaveFailure, setForceSaveFailure] = useState(false);
     const [appliedCount, setAppliedCount] = useState(0);
     const [lastOutput, setLastOutput] = useState<DirectorOutputSummary | null>(null);
+    const theme = useThemeStore((state) => state.theme);
+    const setTheme = useThemeStore((state) => state.setTheme);
+    useEffect(() => () => { if (lastOutput) URL.revokeObjectURL(lastOutput.previewUrl); }, [lastOutput]);
     const [flushCount, setFlushCount] = useState(0);
     const [events, setEvents] = useState(() => readDirectorEvents());
     const snapshot = useMemo(() => readDirectorReproSnapshot(), []);
@@ -85,7 +89,7 @@ export default function DirectorReproLab() {
         const beauty = `${bitmap.width}×${bitmap.height} · ${output.beauty.size} B`;
         bitmap.close();
         const clayVideo = output.clayVideo ? await readDirectorVideoSize(output.clayVideo) : "无";
-        setLastOutput({ beauty, clayVideo });
+        setLastOutput({ beauty, clayVideo, previewUrl: URL.createObjectURL(output.beauty) });
         setAppliedCount((count) => count + 1);
     }, []);
 
@@ -114,6 +118,9 @@ export default function DirectorReproLab() {
                     对象数 {scene.objects.length}
                 </span>
                 <span className="ml-auto flex flex-wrap items-center gap-2">
+                    <Button size="small" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                        {theme === "dark" ? "验证浅色主题" : "验证深色主题"}
+                    </Button>
                     <Button size="small" data-testid="inject-local-model" onClick={() => injectModel("local")}>
                         注入本地模型
                     </Button>
@@ -138,6 +145,7 @@ export default function DirectorReproLab() {
             </header>
 
             <EnvironmentSnapshot snapshot={snapshot} appliedCount={appliedCount} lastOutput={lastOutput} flushCount={flushCount} sceneRevisionHint={scene.updatedAt} />
+            {lastOutput ? <figure className="mb-4 max-w-3xl"><img alt="实际回写镜头 PNG" src={lastOutput.previewUrl} className="w-full rounded-lg" /><figcaption>实际 onApply 回写图片 · {lastOutput.beauty}</figcaption></figure> : null}
             <DiagnosticEventList events={events} />
             <ReproMatrix />
 

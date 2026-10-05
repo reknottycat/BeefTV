@@ -1,6 +1,7 @@
 import { scopedStorageKey } from "@/lib/user-scope";
 import { isDirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import type { DirectorScene } from "@/types/director";
+import { validateDirectorDirection } from "./director-motion";
 
 export type DirectorSaveStatus = "dirty" | "saving" | "saved" | "error";
 export type DirectorCloseDecision = "close" | "offer-draft-exit" | "stay";
@@ -92,6 +93,7 @@ const isDirectorScene = (value: unknown, expectedSceneId: string): value is Dire
         Array.isArray(value.cameras) &&
         Array.isArray(value.lights) &&
         Array.isArray(value.shots) &&
+        value.shots.every((shot) => isRecord(shot) && (shot.direction === undefined || validateDirectorDirection(shot.direction).length === 0)) &&
         typeof value.activeShotId === "string" &&
         typeof value.createdAt === "string" &&
         typeof value.updatedAt === "string"

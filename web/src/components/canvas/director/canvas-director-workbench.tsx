@@ -9,6 +9,10 @@ import type { AnimationClip } from "three";
 
 import { CanvasDirectorOnboarding } from "@/components/canvas/director/canvas-director-onboarding";
 import { DirectorSceneInspector } from "@/components/canvas/director/director-scene-inspector";
+import { DirectorMotionPanel } from "./director-motion-panel";
+import { DirectorMotionPreview } from "./director-motion-preview";
+import { captureDirectorMotionFrame } from "@/lib/canvas/director/director-motion-capture";
+import type { DirectorDirection } from "@/types/director-motion";
 import { DirectorScreenshotGallery } from "@/components/canvas/director/director-screenshot-gallery";
 import { DirectorCameraScreenshotTabs, type DirectorCameraInspectorTab } from "@/components/canvas/director/director-camera-screenshot-tabs";
 import { DirectorCameraProperties } from "@/components/canvas/director/director-camera-properties";
@@ -19,6 +23,7 @@ import { DirectorViewportDock } from "@/components/canvas/director/director-view
 import { DirectorSequencer } from "@/components/canvas/director/director-sequencer";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { compileDirectorPrompt } from "@/lib/canvas/director/director-prompt-compiler";
+import { compileDirectorTimeline } from "@/lib/canvas/director/director-timeline";
 import { advanceDirectorPlayhead, resolveDirectorCameraAlignment, resolveDirectorCameraMoveKeyframes, resolveDirectorKeyframeRecord, resolveDirectorObjectTransformEdit, snapDirectorTime } from "@/lib/canvas/director/director-animation-semantics";
 import { createDirectorTransaction, installDirectorTerminalListeners, type DirectorTransaction } from "@/lib/canvas/director/director-gesture-transaction";
 import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnostics-recorder";
@@ -74,6 +79,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const [recording, setRecording] = useState(false);
     const [onboardingRestartSignal, setOnboardingRestartSignal] = useState(0);
     const [navigationTab, setNavigationTab] = useState<DirectorWorkbenchTab>("scene");
+    const [motionProposal, setMotionProposal] = useState<DirectorDirection | null>(null);
     const [sceneSearch, setSceneSearch] = useState("");
     const [sceneInspectorView, setSceneInspectorView] = useState<"scene" | "shot">("scene");
     const [cameraInspectorTab, setCameraInspectorTab] = useState<DirectorCameraInspectorTab>("properties");
@@ -246,6 +252,13 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     }, [message, modal, open, scene, writeDraft]);
 
     const activeShot = draft?.shots?.find((item) => item.id === draft.activeShotId) || draft?.shots?.[0] || null;
+    const motionPreview = useMemo(() => {
+        if (!draft || !activeShot || (!motionProposal && !activeShot.direction)) return { direction: null, error: "" };
+        try {
+            const previewScene = motionProposal ? { ...draft, shots: draft.shots.map((shot) => shot.id === activeShot.id ? { ...shot, direction: motionProposal } : shot) } : draft;
+            return { direction: compileDirectorTimeline(previewScene, activeShot.fps).shots.find((shot) => shot.shotId === activeShot.id)?.direction || null, error: "" };
+        } catch (error) { return { direction: null, error: error instanceof Error ? error.message : "动效时间线无效" }; }
+    }, [draft, activeShot, motionProposal]);
     const visibleSceneItems = useMemo(() => draft ? searchDirectorSceneItems(draft, sceneSearch) : [], [draft, sceneSearch]);
     const activeCamera = draft?.cameras?.find((item) => item.id === activeShot?.cameraId) || draft?.cameras?.[0] || null;
     const selectedObject = draft?.objects?.find((item) => item.id === selectedObjectId) || null;
@@ -391,7 +404,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 const shot = current?.shots.find((item) => item.id === current.activeShotId) || current?.shots[0];
                 if (current && shot && onCaptureCover && onShouldCaptureCover?.(current, shot.id) && viewportRef.current) {
                     try {
-                        const beauty = await viewportRef.current.capture("beauty");
+                        const direction = shot.direction ? compileDirectorTimeline(current, shot.fps).shots.find((entry) => entry.shotId === shot.id)?.direction : undefined;
+                        const beauty = direction ? await captureDirectorMotionFrame(direction, 0, Math.round(shot.duration * shot.fps), shot.fps) : await viewportRef.current.capture("beauty");
                         void onCaptureCover({ scene: current, shotId: shot.id, beauty }).catch(() => {
                             message.warning("导演台封面保存失败，下次打开镜头后可重试");
                         });
@@ -785,7 +799,9 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         const expected = { scene: current, shotId: activeShot.id };
         setSaving(true);
         try {
-            const beauty = await viewportRef.current.capture("beauty");
+            if (motionProposal) throw new Error("请先应用或取消动效候选，再回写当前镜头");
+            const direction = activeShot.direction ? compileDirectorTimeline(current, activeShot.fps).shots.find((entry) => entry.shotId === activeShot.id)?.direction : undefined;
+            const beauty = direction ? await captureDirectorMotionFrame(direction, Math.round(playhead * activeShot.fps), Math.round(activeShot.duration * activeShot.fps), activeShot.fps) : await viewportRef.current.capture("beauty");
             if (!isDirectorOutputSnapshotCurrent(draftRef.current, expected)) throw new Error("输出期间场景或镜头已变化，请重试");
             const prompt = compileDirectorPrompt(current, activeShot);
             // 先镜像最新 scene，再做 canvas 输出；失败时 draft 保留可继续重试。
@@ -807,12 +823,16 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         if (captureBusy || !captureReady || !current || !shot || !viewportRef.current) return;
         setCaptureBusy(true);
         try {
-            const beauty = await viewportRef.current.capture("beauty");
-            if (signal.aborted || !openRef.current || draftRef.current?.id !== current.id) return;
+            if (navigationTab === "motion" && motionProposal) throw new Error("请先应用或取消动效候选，再保存镜头截图");
+            const direction = navigationTab === "motion" && shot.direction ? compileDirectorTimeline(current, shot.fps).shots.find((entry) => entry.shotId === shot.id)?.direction : undefined;
+            const beauty = direction ? await captureDirectorMotionFrame(direction, Math.round(playhead * shot.fps), Math.round(shot.duration * shot.fps), shot.fps) : await viewportRef.current.capture("beauty");
+            if (signal.aborted || !openRef.current) return;
+            if (!isDirectorOutputSnapshotCurrent(draftRef.current, { scene: current, shotId: shot.id })) throw new Error("截图期间场景或镜头已变化，请重试");
             const uploaded = await uploadImage(beauty);
             const latest = draftRef.current;
             const latestShot = latest?.shots.find((item) => item.id === shot.id);
-            if (signal.aborted || !openRef.current || !latest || latest.id !== current.id || !latestShot) return;
+            if (signal.aborted || !openRef.current || !latest || !latestShot) return;
+            if (!isDirectorOutputSnapshotCurrent(latest, { scene: current, shotId: shot.id })) throw new Error("截图保存期间场景或镜头已变化，请重试");
             const name = nextDirectorScreenshotName(latest.cameras.find((item) => item.id === latestShot.cameraId)?.name || "机位", latestShot.screenshots?.length || 0);
             const screenshot = { id: nanoid(), name, url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, createdAt: new Date().toISOString() };
             addAsset({ kind: "image", title: name, coverUrl: uploaded.url, tags: ["导演台截图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-screenshot", sceneId: latest.id, shotId: shot.id } });
@@ -834,6 +854,10 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         stagedTransaction.end("commit");
         const current = draftRef.current;
         if (!current || !activeShot || !viewportRef.current || recording) return;
+        if (activeShot.direction) {
+            message.info("本镜已编排 2D 动效，请导出制作包并使用 Remotion 渲染；白膜仅导出 3D 场景");
+            return;
+        }
         const expected = { scene: current, shotId: activeShot.id };
         setRecording(true);
         const wasPlaying = playing;
@@ -924,6 +948,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 <aside className="flex min-h-0 overflow-hidden border-r" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     <DirectorWorkbenchRail active={navigationTab} onChange={(tab) => {
                         setNavigationTab(tab);
+                        if (tab === "motion") setSequencerVisible(true);
                         if (tab === "scene" || tab === "aspect" || tab === "panorama") {
                             setSelectedObjectId(null);
                             setSelectedLightId(null);
@@ -931,6 +956,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                         }
                     }} />
                     <div className="thin-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto">
+                    {navigationTab === "motion" ? <DirectorMotionPanel key={activeShot.id} scene={draft} shot={activeShot} onChange={(direction) => updateShot(activeShot.id, { direction })} onPreview={setMotionProposal} /> : null}
                     {navigationTab === "scene" ? <>
                     <PanelTitle title="场景" action={<AddMenuButton label="添加场景对象" items={addObjectMenuItems} />} />
                     <div className="relative mx-2 mb-3">
@@ -983,7 +1009,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 </aside>
 
                 <main className="relative min-h-0 overflow-hidden bg-neutral-900">
-                    <DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={selectedObjectId} selectedBone={selectedBone} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={sequencerVisible} viewMode={viewMode} onViewModeChange={setViewMode} onCaptureReadyChange={setCaptureReady} onSelectObject={setSelectedObjectId} onSelectBone={setSelectedBone} onObjectTransform={handleObjectTransform} onBoneTransform={handleBoneTransform} onActorRigReady={handleActorRigReady} />
+                    <div className="h-full w-full" style={{ visibility: navigationTab === "motion" && (motionProposal || activeShot.direction) ? "hidden" : "visible" }}><DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={selectedObjectId} selectedBone={selectedBone} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={sequencerVisible} viewMode={viewMode} onViewModeChange={setViewMode} onCaptureReadyChange={setCaptureReady} onSelectObject={setSelectedObjectId} onSelectBone={setSelectedBone} onObjectTransform={handleObjectTransform} onBoneTransform={handleBoneTransform} onActorRigReady={handleActorRigReady} /></div>
+                    {navigationTab === "motion" && motionPreview.direction ? <div className="absolute inset-0"><DirectorMotionPreview direction={motionPreview.direction} time={playhead} duration={activeShot.duration} fps={activeShot.fps} pending={Boolean(motionProposal)} /></div> : navigationTab === "motion" && motionPreview.error ? <div role="alert" className="absolute inset-0 flex items-center justify-center p-6 text-red-300">{motionPreview.error}</div> : null}
                     <div className="pointer-events-none absolute left-3 top-3 text-[var(--fs-tiny)] font-medium text-white/70">{activeShot.name} · {activeCamera?.name || "无摄影机"} · {activeShot.duration}s</div>
                     <CanvasDirectorOnboarding scope={onboardingScope} open={open} restartSignal={onboardingRestartSignal} className="absolute right-3 top-3 z-[var(--z-popover)] w-[min(360px,calc(100%-24px))]" />
                     <DirectorViewportDock transformMode={transformMode} renderMode={renderMode} renderModes={capabilities.renderModes} onTransformModeChange={setTransformMode} onRenderModeChange={setRenderMode} onAddActor={addActor} onAddBox={() => addPrimitive("box", "立方体")} onAddLight={addLight} onAddCamera={addCamera} onAlignCamera={alignCameraToView} timelineOpen={sequencerVisible} onToggleTimeline={() => setSequencerVisible(!sequencerVisible)} captureBusy={captureBusy} captureReady={captureReady} onCapture={() => void captureScreenshot()} />
@@ -991,7 +1018,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
 
                 <aside className="thin-scrollbar min-h-0 overflow-y-auto border-l max-lg:col-span-2 max-lg:max-h-[40vh] max-lg:border-l-0 max-lg:border-t" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     {/* 摄影机模式下右栏固定显示 shot/camera 检查器：对齐视图与运镜是这个模式的主入口。 */}
-                    {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onUniformScaleChange={(value, stage) => handleUniformScale(selectedObject.id, value, stage)} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}><DirectorCameraProperties camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} onUpdateCamera={updateActiveCamera} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={handleFollowObject}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs> : shotInspector}
+                    {navigationTab === "motion" ? shotInspector : selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onUniformScaleChange={(value, stage) => handleUniformScale(selectedObject.id, value, stage)} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}><DirectorCameraProperties camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} onUpdateCamera={updateActiveCamera} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={handleFollowObject}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs> : shotInspector}
                 </aside>
             </div>
 
