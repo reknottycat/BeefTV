@@ -77,7 +77,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function launchVite(port, apiTarget) {
     const child = spawn("bunx", ["vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
         cwd: process.cwd(),
-        env: { ...process.env, VITE_API_PROXY_TARGET: apiTarget },
+        env: { ...process.env, VITE_API_PROXY_TARGET: apiTarget, VITE_COMFY_PROXY_TARGET: apiTarget },
         stdio: ["ignore", "pipe", "pipe"],
     });
     let log = "";
@@ -105,6 +105,12 @@ async function launchVite(port, apiTarget) {
 async function launchApiFixture() {
     const server = createHttpServer((request, response) => {
         const url = new URL(request.url || "/", "http://127.0.0.1");
+        if (request.method === "GET" && ["/api/local-comfy/v1/config", "/api/local-comfy/v1/recipes"].includes(url.pathname)) {
+            const data = url.pathname.endsWith("/recipes") ? [] : { generation_enabled: false, storage_scope: "sidecar", concurrency: 1, max_reference_bytes: 10 << 20, recipe_count: 0 };
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ code: 0, data }));
+            return;
+        }
         if (request.method === "GET" && url.pathname === "/api/canvas-projects") {
             response.writeHead(200, { "Content-Type": "application/json" });
             response.end(JSON.stringify({ code: 0, data: { items: [], total: 0 } }));

@@ -8,7 +8,7 @@ import type { CanvasSnapshot } from "../src/lib/canvas/canvas-operation-contract
 import { CanvasNodeType } from "../src/types/canvas";
 import type { GenerationTask } from "../src/services/api/task-center";
 
-const channel = createModelChannel({ id: "system-test", name: "测试", scope: "system", models: ["gpt-image-1"], apiFormat: "openai", interfaceType: "openai-images", apiKey: "system", baseUrl: "/api/test" });
+const channel = createModelChannel({ id: "system-test", name: "测试", scope: "system", models: ["gpt-image-1"], modelProfiles: [{ model: "gpt-image-1", capability: "image", protocol: "openai-images" }], apiFormat: "openai", interfaceType: "openai-images", apiKey: "system", baseUrl: "/api/test" });
 const model = "system-test::gpt-image-1";
 const config = { ...defaultConfig, channels: [channel], model };
 const proposal: CreativeProposal = { id: "p", version: 1, title: "双图", summary: "摘要", markdown: "正文", deliverables: [], workflow: { nodes: [{ ref: "a", kind: "image", title: "参考", prompt: "参考" }, { ref: "b", kind: "image", title: "结果", prompt: "结果", referenceRefs: ["a"] }], edges: [], autoRun: false }, generationItems: [{ ref: "a", mode: "image", model, size: "1024x1024" }, { ref: "b", mode: "image", model, size: "1024x1024", referenceRefs: ["a"] }], extra: { nodeIds: { a: "original-a", b: "original-b" } } };
@@ -61,10 +61,12 @@ describe("创作规格与局部重做", () => {
         expect(prepared).toHaveLength(1);
         expect(prepared[0].itemKey).toBe("media:v2:b:2");
         expect(prepared[0].request.input.nodeId).toBe("original-b");
+        expect(prepared[0].request.input.metadata?.retryOf).toBe("old-b");
         expect((prepared[0].request.input.referenceImages as { id: string }[]).map((reference) => reference.id)).toEqual(["original-a"]);
         expect(saved.pendingRedo).toBeUndefined();
         expect(saved.media[0]).toEqual(state.media[0]);
         expect(saved.media[1].attempt).toBe(2);
+        expect(saved.media[1].retryOf).toBe("old-b");
         expect(run.status).toBe("completed");
         expect(executions).toBe(1);
     });

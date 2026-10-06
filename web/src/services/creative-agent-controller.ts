@@ -452,7 +452,7 @@ export class CreativeAgentController {
             });
             const mediaConfig = creativeMediaConfig(this.options.config(), item.model);
             const config = { ...mediaConfig, count: "1", ...(item.size ? { size: item.size } : {}), ...(item.seconds !== undefined ? { videoSeconds: String(item.seconds) } : {}), ...(item.quality ? item.mode === "video" ? { vquality: item.quality } : { quality: item.quality } : {}) };
-            const request = await prepareBackendGenerationTask({ projectId: this.run!.canvasId, mode: item.mode, prompt: node.metadata?.prompt || "", config, referenceImages, signal: this.abort.signal, metadata: { source: "creative-agent", creationRunId: this.run!.id, nodeId: node.id, conversationId: this.run!.id } });
+            const request = await prepareBackendGenerationTask({ projectId: this.run!.canvasId, mode: item.mode, prompt: node.metadata?.prompt || "", config, referenceImages, retryOf: media.retryOf, signal: this.abort.signal, metadata: { source: "creative-agent", creationRunId: this.run!.id, nodeId: node.id, conversationId: this.run!.id } });
             request.model = item.model;
             request.input = { ...request.input, nodeId: node.id, metadata: { ...request.input?.metadata as Record<string, unknown>, clientOperationId: `creation:${this.run!.id}:v${proposal.version}:${media.ref}:${media.attempt}` } };
             const submission = await this.api.prepare(this.run!.id, { ...this.guard(), itemKey: `media:v${proposal.version}:${media.ref}:${media.attempt}`, proposalVersion: proposal.version, request }, this.abort.signal);
@@ -593,7 +593,10 @@ export class CreativeAgentController {
             this.run = await this.api.approveProposal(this.run!.id, { ...this.guard(), revision: this.run!.revision, proposalVersion: intent.proposalVersion, proposal, ops: operations }, this.abort.signal);
         }
         this.guard();
-        this.setMedia(intent.ref, { status: "pending", attempt: intent.attempt, submissionId: undefined, taskId: undefined, error: undefined });
+        const previous = this.state.media.find((media) => media.ref === intent.ref)!;
+        // Keep the parent across the persisted reset and reconnect so native admission
+        // can reject a redo while the original upstream submission is still uncertain.
+        this.setMedia(intent.ref, { status: "pending", attempt: intent.attempt, retryOf: previous.taskId || previous.retryOf, submissionId: undefined, taskId: undefined, error: undefined });
         this.state = { ...this.state, pendingRedo: undefined };
         await this.save("running");
         await this.prepareMediaBatch();

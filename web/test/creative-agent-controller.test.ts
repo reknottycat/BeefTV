@@ -86,6 +86,24 @@ test("本地运行时自动准入规划，不进入 waiting_execution", async ()
     } finally { h.controller.dispose(); }
 });
 
+test("H3 制作请求保留获批参考节点身份和重做父任务", async () => {
+    const model = "local-comfy:h3_i2v_turbo4";
+    const config = { ...defaultConfig, localComfyModels: [{ id: "h3_i2v_turbo4", name: "H3", mode: "i2v", reference_slots: 1, ready: true }], localComfyGenerationEnabled: true };
+    const toolsProposal = { ...proposal, workflow: { ...proposal.workflow, nodes: [{ ref: "shot", kind: "video" as const, title: "镜头", prompt: "工具测试", referenceNodeIds: ["approved-frame"] }] }, generationItems: [{ ref: "shot", mode: "video" as const, model, size: "864x480", seconds: 124 / 24 }] };
+    const h = harness({ ...initialCreativeState(), proposal: toolsProposal, canvasApplied: true, media: [{ ref: "shot", nodeId: "shot", attempt: 2, retryOf: "original-h3-task", status: "pending" }] }, "running", [], undefined, true, config);
+    h.snapshot().nodes[0]!.metadata = { prompt: "工具测试" };
+    h.snapshot().nodes.push({ id: "approved-frame", type: CanvasNodeType.Image, title: "首帧", position: { x: 0, y: 0 }, width: 864, height: 480, metadata: { storageKey: "resource:owned-frame", status: "success", mimeType: "image/png" } });
+    let captured: Parameters<typeof creationRuns.prepare>[1] | undefined;
+    h.api.prepare = async (_id, input) => { captured = input; throw new Error("TEST_STOP_AT_PREPARE"); };
+    try {
+        await h.controller.load("run");
+        await expect(h.controller.resume()).rejects.toThrow("TEST_STOP_AT_PREPARE");
+        expect(captured!.request.input?.referenceImages).toMatchObject([{ id: "approved-frame", storageKey: "resource:owned-frame" }]);
+        expect(captured!.request.input?.metadata).toMatchObject({ retryOf: "original-h3-task", clientOperationId: "creation:run:v1:shot:2" });
+        expect(h.counters().executions).toBe(0);
+    } finally { h.controller.dispose(); }
+});
+
 test("本地运行时恢复未批准规划提交时自动准入", async () => {
     const quote = submission("plan", "planning:key");
     const completed = { id: "task", status: "succeeded", resultJson: JSON.stringify({ toolCalls: [{ id: "first", type: "function", function: { name: "creative_respond", arguments: JSON.stringify({ message: "恢复完成" }) } }] }) } as GenerationTask;

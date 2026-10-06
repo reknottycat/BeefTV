@@ -24,7 +24,7 @@ describe("native local task input without upstream requests", () => {
     test("H3 maps a real selected owned image and fixed recipe rather than cloud duration or size", () => {
         const task = buildLocalComfyGenerationTaskInput(input(videoRecipe, [firstFrame]));
         expect(task.operation).toBe("image_to_video");
-        expect(task.input?.referenceImages).toEqual([{ storageKey: "resource:TEST-owned-image", name: "TEST-first-frame.png", type: "image/png", width: 864, height: 480 }]);
+        expect(task.input?.referenceImages).toEqual([{ id: "selected-image", storageKey: "resource:TEST-owned-image", name: "TEST-first-frame.png", type: "image/png", width: 864, height: 480 }]);
         expect(task.input).not.toHaveProperty("videoSeconds");
         expect(task.input).not.toHaveProperty("size");
     });

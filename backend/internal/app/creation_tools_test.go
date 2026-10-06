@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -124,11 +125,23 @@ func TestCreationRunningHubFrozenCredentialsAndAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := CreateTaskRequest{Type: "canvas_image", Operation: "image", Provider: "runninghub", Model: "runninghub:app:test-app", Prompt: "测试图片", Input: map[string]any{"mode": "image", "prompt": "测试图片", "referenceImages": []any{}, "config": map[string]any{"interfaceType": "runninghub-workflow-image", "baseUrl": "https://www.runninghub.cn", "apiKey": "TEST-PRIVATE-RUNNINGHUB-KEY", "webappId": "test-app", "model": "test-app", "workflowFields": []any{map[string]any{"nodeId": "1", "fieldName": "text", "fieldType": "string", "source": "prompt", "enabled": true}}, "count": "1"}}}
+	// Match workflowProviderConfig's real transport shape, including empty headers.
+	request.Input["config"].(map[string]any)["headers"] = []any{}
 	approveToolCanvas(t, s, id, guard, &request, nil)
 	prepare := CreationRequest{CreationGuard: guard, ItemKey: "media:v1:rh:1", ProposalVersion: 1, Request: request}
 	item, err := s.PrepareCreationSubmission("user", id, prepare)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, headers := range []any{[]any{map[string]any{"name": "Authorization", "value": "TEST-PRIVATE-HEADER"}}, map[string]any{}, "TEST-PRIVATE-HEADER"} {
+		invalid := request
+		raw, _ := json.Marshal(request.Input)
+		invalid.Input = nil
+		_ = json.Unmarshal(raw, &invalid.Input)
+		invalid.Input["config"].(map[string]any)["headers"] = headers
+		if _, err := s.PrepareCreationSubmission("user", id, CreationRequest{CreationGuard: guard, ItemKey: "forbidden-headers", ProposalVersion: 1, Request: invalid}); err == nil {
+			t.Fatal("nonempty or malformed headers admitted")
+		}
 	}
 	altered := request
 	raw, _ := json.Marshal(request.Input)
@@ -179,5 +192,53 @@ func TestCreationRunningHubFrozenCredentialsAndAdmission(t *testing.T) {
 	}
 	if err = validateCreationJSON(map[string]any{"apiKey": "TEST-PRIVATE-RUNNINGHUB-KEY"}); err == nil {
 		t.Fatal("plan/state now permits plaintext credentials")
+	}
+}
+
+func TestCreationLocalComfyReferenceScopeRequiresCanvasIdentity(t *testing.T) {
+	now := time.Now()
+	metadata := map[string]any{"prompt": "TEST video", "model": "local-comfy:h3_i2v_turbo4", "referenceNodeIds": []any{"approved-frame"}}
+	ops, _ := json.Marshal([]CreationCanvasOp{{Type: "add_node", ID: "video-shot", NodeType: "video", Metadata: metadata}})
+	run := &model.CreationRun{CanvasID: "canvas", Status: "running", ApprovedAt: &now, ApprovedProposalVersion: 1, ApprovedProposalHash: "approved", ApprovedOperationsJSON: string(ops)}
+	request := CreateTaskRequest{Type: "canvas_video", Provider: "local-comfy", ProjectID: "canvas", Model: "local-comfy:h3_i2v_turbo4", Prompt: "TEST video", Input: map[string]any{"nodeId": "video-shot", "referenceImages": []any{map[string]any{"id": "approved-frame", "storageKey": "resource:owned-frame"}}}}
+	if err := validateCreationSubmissionScope(run, 1, request); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"", "different-frame"} {
+		request.Input["referenceImages"] = []any{map[string]any{"id": id, "storageKey": "resource:owned-frame"}}
+		if err := validateCreationSubmissionScope(run, 1, request); err == nil {
+			t.Fatal("unapproved reference identity admitted")
+		}
+	}
+}
+
+func TestCreationLocalComfyRedoRetainsParentAdmission(t *testing.T) {
+	s, db, id, guard := creationTestService(t)
+	mock := &nativeComfyMock{t: t, enabled: true, assets: map[string]localComfyAsset{}, jobs: map[string]localComfyJob{}}
+	s.localComfyTransport = mock
+	s.localResourceStorage = true
+	request := nativeComfyTaskRequest()
+	approveToolCanvas(t, s, id, guard, &request, map[string]any{"size": "1024x1024"})
+	raw, _ := json.Marshal(request.Input)
+	parent := model.Task{ID: "creation-parent", UserID: "user", ProjectID: request.ProjectID, Type: request.Type, Provider: "local-comfy", Model: request.Model, Prompt: request.Prompt, Status: model.TaskStatusFailed, Stage: "submission_unknown", InputJSON: string(raw)}
+	if err := db.Create(&parent).Error; err != nil {
+		t.Fatal(err)
+	}
+	request.Input["metadata"].(map[string]any)["retryOf"] = parent.ID
+	prepare := CreationRequest{CreationGuard: guard, ItemKey: "media:v1:redo:2", ProposalVersion: 1, Request: request}
+	if _, err := s.PrepareCreationSubmission("user", id, prepare); err == nil {
+		t.Fatal("creation redo bypassed uncertain parent admission")
+	}
+	if len(mock.requests) != 0 || mock.jobPosts != 0 {
+		t.Fatal("uncertain redo reached adapter")
+	}
+	if err := db.Model(&parent).Updates(map[string]any{"status": model.TaskStatusSucceeded, "stage": "completed"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PrepareCreationSubmission("user", id, prepare); err != nil {
+		t.Fatal(err)
+	}
+	if mock.jobPosts != 0 {
+		t.Fatal("preparing a confirmed new version submitted a GPU job")
 	}
 }

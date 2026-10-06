@@ -53,7 +53,7 @@ export function productionChecks(timeline: TimelineProject): string[] {
         if (!Number.isFinite(clip.startMs) || clip.startMs < 0 || !Number.isFinite(clip.durationMs) || clip.durationMs <= 0) issues.push(`“${clip.title || clip.id}”的起点或时长无效`);
         if (clip.sourceStartMs !== undefined && (!Number.isFinite(clip.sourceStartMs) || clip.sourceStartMs < 0)) issues.push(`“${clip.title || clip.id}”的源起点无效`);
         if (["video", "image", "audio"].includes(clip.kind) && !resourceIdFromStorageKey(clip.directMedia?.storageKey)) issues.push(`“${clip.title || clip.id}”尚未保存为可读取的资源`);
-        if (clip.kind !== "image" && clip.sourceDurationMs && (clip.sourceStartMs || 0) + clip.durationMs > clip.sourceDurationMs + 1) issues.push(`“${clip.title || clip.id}”裁剪超出源素材时长`);
+        if ((clip.kind === "video" || clip.kind === "audio") && clip.sourceDurationMs && (clip.sourceStartMs || 0) + clip.durationMs > clip.sourceDurationMs + 1) issues.push(`“${clip.title || clip.id}”裁剪超出源素材时长`);
         if (clip.kind === "text") issues.push("文字装饰尚不支持成片合成，请改为字幕或画面素材");
     }
     for (const clip of visuals) {

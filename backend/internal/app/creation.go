@@ -367,6 +367,11 @@ func (s *Service) prepareCreationTask(userID string, req CreateTaskRequest) (*mo
 		for _, key := range []string{"baseUrl", "apiKey", "runningHubWalletApiKey", "runningHubUploadApiKey"} {
 			delete(publicConfig, key)
 		}
+		// The shared frontend builder explicitly sends an empty header list.
+		// Only that empty transport value is harmless; populated headers stay forbidden.
+		if headers, ok := publicConfig["headers"].([]any); ok && len(headers) == 0 {
+			delete(publicConfig, "headers")
+		}
 		validationRequest.Input["config"] = publicConfig
 	}
 	if err := validateCreationJSON(validationRequest); err != nil {

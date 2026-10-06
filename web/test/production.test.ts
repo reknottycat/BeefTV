@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { productionChecks, productionTimeline } from "../src/lib/creation/production";
 import { timelineClipVolume } from "../src/lib/timeline/timeline-audio";
+import { buildTimelineFromNodes } from "../src/lib/timeline/timeline-build";
+import { CanvasNodeType } from "../src/types/canvas";
 import { CreativeAgentController, type CreativeControllerView } from "../src/services/creative-agent-controller";
 import { initialCreativeState } from "../src/lib/creation/creative-agent-state";
 import { creationRuns, type CreationRun } from "../src/services/api/creation-runs";
@@ -9,6 +11,16 @@ import type { TimelineProject } from "../src/types/timeline";
 import type { GenerationTask } from "../src/services/api/task-center";
 
 const timeline: TimelineProject = { version: 2, tracks: [{ id: "v", kind: "video", label: "画面", order: 0 }], clips: [{ id: "shot", nodeId: "node", trackId: "v", kind: "video", startMs: 0, durationMs: 1000, sourceDurationMs: 2000, directMedia: { id: "source", kind: "video", title: "镜头", storageKey: "resource:source" } }], durationMs: 1000 };
+test("字幕的源内位置不按媒体裁剪长度校验，音视频越界仍拒绝", () => {
+    const nodes = [{ id: "video", type: CanvasNodeType.Video, title: "镜头", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { storageKey: "resource:video", durationMs: 3000, subtitleEntries: [{ index: 1, startMs: 1000, endMs: 2000, text: "后段字幕" }] } }];
+    const assembled = productionTimeline(buildTimelineFromNodes(nodes), nodes);
+    expect(assembled.clips.find((clip) => clip.kind === "subtitle")).toMatchObject({ sourceStartMs: 1000, sourceDurationMs: 1000, durationMs: 1000 });
+    expect(productionChecks(assembled)).toEqual([]);
+    for (const kind of ["video", "audio"] as const) {
+        const clip = { ...timeline.clips[0], kind, sourceStartMs: 1500 };
+        expect(productionChecks({ ...timeline, clips: [clip] })).toContain("“shot”裁剪超出源素材时长");
+    }
+});
 test("成片检查拒绝重叠、裁剪越界和未保存素材，隐藏轨道不参与检查", () => {
     expect(productionChecks(timeline)).toEqual([]);
     const invalid = { ...timeline, clips: [...timeline.clips, { ...timeline.clips[0], id: "overlap", sourceStartMs: 1500, directMedia: undefined }] };

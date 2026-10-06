@@ -21,7 +21,7 @@ import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_VIDEO_TRACK_ID, normalizeTimelineProjec
 import { formatTimelineTime, getTimelineTrackWidth, getFitTimelineZoom, zoomIn, zoomOut } from "@/lib/timeline/timeline-view";
 import { exportTimelineToMp4 } from "@/lib/timeline/timeline-export";
 import type { TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
-import { exportNativeTimeline } from "@/services/timeline-native-export";
+import { exportNativeTimeline, runNativeTimelineExportAttempt, type NativeTimelineExportIntent } from "@/services/timeline-native-export";
 import { productionTimeline } from "@/lib/creation/production";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { timelineClipVisible } from "@/lib/timeline/timeline-audio";
@@ -500,15 +500,14 @@ export function CanvasTimelineDialog({
     };
 
     // 组装导出：把当前草稿按片段顺序合成一个 MP4 Blob（导出下载与生成新片段共用）。
-    const nativeExportIntent = useRef<{ hash: string; key: string } | null>(null);
+    const nativeExportIntent = useRef<NativeTimelineExportIntent | null>(null);
     const runExport = async (): Promise<Blob> => {
         const snapshot = productionTimeline(normalizeTimelineProject(draft), nodes);
         const mediaClips = snapshot.clips.filter((clip) => ["video", "audio", "image"].includes(clip.kind) && timelineClipVisible(clip, snapshot.tracks));
         if (mediaClips.length && mediaClips.every((clip) => resourceIdFromStorageKey(clip.directMedia?.storageKey))) {
             const hash = JSON.stringify(snapshot);
-            if (nativeExportIntent.current?.hash !== hash) nativeExportIntent.current = { hash, key: crypto.randomUUID() };
             setExporting(true);
-            try { return await exportNativeTimeline(snapshot, nodes, nativeExportIntent.current.key, (percent, detail) => { setExportPercent(percent); setExportDetail(detail); }); }
+            try { return await runNativeTimelineExportAttempt(nativeExportIntent, hash, (clientKey) => exportNativeTimeline(snapshot, nodes, clientKey, (percent, detail) => { setExportPercent(percent); setExportDetail(detail); })); }
             finally { setExporting(false); setExportPercent(0); setExportDetail(""); }
         }
         if (mediaClips.some((clip) => clip.kind !== "video") || draft.tracks.some((track) => track.muted || track.visible === false) || mediaClips.some((clip) => clip.volume !== undefined && clip.volume !== 1 || clip.fadeInMs || clip.fadeOutMs)) throw new Error("此剪辑包含声音、图片或轨道效果，请先将全部素材保存为本地资源后导出");
