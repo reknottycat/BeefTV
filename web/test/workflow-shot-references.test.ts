@@ -28,7 +28,7 @@ describe("workflow shot asset references", () => {
             const task = buildLocalComfyGenerationTaskInput({ projectId: "TEST-project", mode: "video", model: "local-comfy:h3_i2v_turbo4", prompt: "TEST bound first frame", recipe, seed: "42", referenceImages: context.referenceImages, clientOperationId: `TEST-bound-${versionId}` });
 
             expect(task.operation).toBe("image_to_video");
-            expect(task.input?.referenceImages).toEqual([{ storageKey, name: context.referenceImages[0]!.name, type: "image/*" }]);
+            expect(task.input?.referenceImages).toEqual([{ id: context.referenceImages[0]!.id, storageKey, name: context.referenceImages[0]!.name, type: "image/*" }]);
             expect(task.input).not.toHaveProperty("config");
         }
     });

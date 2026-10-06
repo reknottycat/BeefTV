@@ -206,6 +206,7 @@ async function connectCdp(cdpPort) {
     });
 
     const pending = new Map();
+    const networkRequests = new Map();
     let nextId = 0;
     const problems = [];
     const record = (kind, text) => {
@@ -242,9 +243,18 @@ async function connectCdp(cdpPort) {
             case "Runtime.consoleAPICalled":
                 if (p?.type === "error") record("console.error", (p.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
                 break;
-            case "Network.loadingFailed":
-                record("network.failed", `${p?.type || "?"} ${p?.errorText || "?"}`);
+            case "Network.requestWillBeSent":
+                networkRequests.set(p.requestId, { method: p.request.method, url: p.request.url });
                 break;
+            case "Network.loadingFinished":
+                networkRequests.delete(p.requestId);
+                break;
+            case "Network.loadingFailed": {
+                const request = networkRequests.get(p.requestId);
+                record("network.failed", `${p?.type || "?"} ${p?.errorText || "?"} canceled=${p?.canceled === true} ${request?.method || "?"} ${request?.url || "?"}`);
+                networkRequests.delete(p.requestId);
+                break;
+            }
             case "Network.responseReceived":
                 if (typeof p?.response?.status === "number" && p.response.status >= 400) {
                     record("network.status", `${p.response.status} ${p.response.url}`);
