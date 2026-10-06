@@ -9,6 +9,7 @@ let server: ReturnType<typeof Bun.serve>;
 let fail = false;
 let recovered = false;
 let requests: string[] = [];
+const nativeHistoryTasks = ["a", "b"].map((id) => ({ id, projectId: "canvas", type: "canvas_video", status: "failed", providerRequestId: `provider-${id}`, prompt: `task ${id}`, attempts: 1, createdAt: "2026-10-01", updatedAt: "2026-10-01" }));
 
 beforeAll(async () => {
     // CI pins Bun 1.3.9, whose build API does not resolve every tsconfig path
@@ -29,6 +30,7 @@ beforeAll(async () => {
         if (path === "/history") return new Response('<div id="root"></div><script type="module" src="/history.js"></script>', { headers: { "Content-Type": "text/html" } });
         if (path.startsWith("/api/")) {
             requests.push(`${request.method} ${path}`);
+            if (request.method === "GET" && path === "/api/tasks") return Response.json({ code: 0, data: nativeHistoryTasks });
             if (path === "/api/tasks/original") return Response.json({ code: 0, data: { id: "original", type: "canvas_video", status: "failed", providerRequestId: "upstream-original", prompt: "test", attempts: 1, createdAt: "2026-10-01", updatedAt: "2026-10-01" } });
             if (/^\/api\/tasks\/[ab](\/logs)?$/.test(path)) {
                 const id = path.split("/")[3];
@@ -86,6 +88,11 @@ test("missing provider receipt hides retrieval and switching canvas suppresses s
 });
 
 test("desktop history late detail never reopens a closed drawer or replaces another task", async () => {
+    // A canvas snapshot alone is intentionally read-only. This scenario needs
+    // real native task summaries before it can exercise delayed detail reads.
+    const fixture = await (await page.request.get(new URL("/api/tasks", server.url).toString())).json();
+    expect(fixture.code).toBe(0);
+    expect(fixture.data.map((task: { id: string; prompt: string }) => [task.id, task.prompt])).toEqual([["a", "task a"], ["b", "task b"]]);
     await page.goto(new URL("/history", server.url).toString());
     await page.getByRole("button", { name: "task a", exact: true }).click();
     await page.getByRole("button", { name: "Close", exact: true }).click();
@@ -97,6 +104,8 @@ test("desktop history late detail never reopens a closed drawer or replaces anot
     await page.waitForTimeout(900);
     expect(await page.getByRole("dialog").getByText("detail a", { exact: true }).count()).toBe(0);
     expect(await page.getByRole("button", { name: "取回结果", exact: true }).count()).toBe(1);
+    expect(requests).toContain("GET /api/tasks/a");
+    expect(requests).toContain("GET /api/tasks/b");
 });
 
 test("retrieved original result is applied and persisted onto the canvas", async () => {
