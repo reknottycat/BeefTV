@@ -93,7 +93,11 @@ test("desktop history late detail never reopens a closed drawer or replaces anot
     const fixture = await (await page.request.get(new URL("/api/tasks", server.url).toString())).json();
     expect(fixture.code).toBe(0);
     expect(fixture.data.map((task: { id: string; prompt: string }) => [task.id, task.prompt])).toEqual([["a", "task a"], ["b", "task b"]]);
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => { pageErrors.push(error.message); console.error("history fixture page error:", error.message); });
     await page.goto(new URL("/history", server.url).toString());
+    expect(pageErrors).toEqual([]);
+    console.info("history fixture mounted:", JSON.stringify({ body: await page.locator("body").innerText(), requests }));
     await page.getByRole("button", { name: "task a", exact: true }).click();
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await page.waitForTimeout(900);
