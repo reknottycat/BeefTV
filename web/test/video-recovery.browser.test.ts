@@ -31,6 +31,8 @@ beforeAll(async () => {
         if (path.startsWith("/api/")) {
             requests.push(`${request.method} ${path}`);
             if (request.method === "GET" && path === "/api/tasks") return Response.json({ code: 0, data: nativeHistoryTasks });
+            if (request.method === "GET" && path === "/api/local-comfy/v1/recipes") return Response.json({ code: 0, data: [] });
+            if (request.method === "GET" && path === "/api/local-comfy/v1/config") return Response.json({ code: 0, data: { generation_enabled: false, storage_scope: "sidecar", concurrency: 1, max_reference_bytes: 10 << 20, recipe_count: 0 } });
             if (path === "/api/tasks/original") return Response.json({ code: 0, data: { id: "original", type: "canvas_video", status: "failed", providerRequestId: "upstream-original", prompt: "test", attempts: 1, createdAt: "2026-10-01", updatedAt: "2026-10-01" } });
             if (/^\/api\/tasks\/[ab](\/logs)?$/.test(path)) {
                 const id = path.split("/")[3];
@@ -94,10 +96,9 @@ test("desktop history late detail never reopens a closed drawer or replaces anot
     expect(fixture.code).toBe(0);
     expect(fixture.data.map((task: { id: string; prompt: string }) => [task.id, task.prompt])).toEqual([["a", "task a"], ["b", "task b"]]);
     const pageErrors: string[] = [];
-    page.on("pageerror", (error) => { pageErrors.push(error.message); console.error("history fixture page error:", error.message); });
+    page.on("pageerror", (error) => { pageErrors.push(error.message); });
     await page.goto(new URL("/history", server.url).toString());
     expect(pageErrors).toEqual([]);
-    console.info("history fixture mounted:", JSON.stringify({ body: await page.locator("body").innerText(), requests }));
     await page.getByRole("button", { name: "task a", exact: true }).click();
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await page.waitForTimeout(900);
@@ -110,6 +111,7 @@ test("desktop history late detail never reopens a closed drawer or replaces anot
     expect(await page.getByRole("button", { name: "取回结果", exact: true }).count()).toBe(1);
     expect(requests).toContain("GET /api/tasks/a");
     expect(requests).toContain("GET /api/tasks/b");
+    expect(pageErrors).toEqual([]);
 });
 
 test("retrieved original result is applied and persisted onto the canvas", async () => {
