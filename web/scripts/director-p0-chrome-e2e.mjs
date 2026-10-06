@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
+import { createDirectorNetworkObserver } from "./director-network-observer.mjs";
 
 const CHROME_CANDIDATES = [
     process.env.CHROME_BIN,
@@ -30,7 +31,8 @@ const ALLOWED_NOISE = ["Warning: [antd: InputNumber] `addonAfter` is deprecated.
 
 /**
  * 网络与资源失败绝不放行：复现台必须是真正的同源本地确定性场景。
- * 出现 4xx/5xx/ERR_* 一律判失败，由根因修复，而不是扩大 allowlist。
+ * 4xx/5xx/ERR_* 保留为失败。仅目录 GET 的主动取消在同 URL 后续请求完整成功后消除，
+ * 以区别 StrictMode 的正常查询生命周期与网络故障，不按错误文本笼统放行。
  */
 
 const results = [];
@@ -77,7 +79,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function launchVite(port, apiTarget) {
     const child = spawn("bunx", ["vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
         cwd: process.cwd(),
-        env: { ...process.env, VITE_API_PROXY_TARGET: apiTarget },
+        env: { ...process.env, VITE_API_PROXY_TARGET: apiTarget, VITE_COMFY_PROXY_TARGET: apiTarget },
         stdio: ["ignore", "pipe", "pipe"],
     });
     let log = "";
@@ -105,6 +107,12 @@ async function launchVite(port, apiTarget) {
 async function launchApiFixture() {
     const server = createHttpServer((request, response) => {
         const url = new URL(request.url || "/", "http://127.0.0.1");
+        if (request.method === "GET" && ["/api/local-comfy/v1/config", "/api/local-comfy/v1/recipes"].includes(url.pathname)) {
+            const data = url.pathname.endsWith("/recipes") ? [] : { generation_enabled: false, storage_scope: "sidecar", concurrency: 1, max_reference_bytes: 10 << 20, recipe_count: 0 };
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ code: 0, data }));
+            return;
+        }
         if (request.method === "GET" && url.pathname === "/api/canvas-projects") {
             response.writeHead(200, { "Content-Type": "application/json" });
             response.end(JSON.stringify({ code: 0, data: { items: [], total: 0 } }));
@@ -202,6 +210,7 @@ async function connectCdp(cdpPort) {
     const pending = new Map();
     let nextId = 0;
     const problems = [];
+    const network = createDirectorNetworkObserver(problems);
     const record = (kind, text) => {
         const clean = String(text ?? "").trim();
         if (!clean) return;
@@ -236,13 +245,11 @@ async function connectCdp(cdpPort) {
             case "Runtime.consoleAPICalled":
                 if (p?.type === "error") record("console.error", (p.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
                 break;
+            case "Network.requestWillBeSent":
+            case "Network.loadingFinished":
             case "Network.loadingFailed":
-                record("network.failed", `${p?.type || "?"} ${p?.errorText || "?"}`);
-                break;
             case "Network.responseReceived":
-                if (typeof p?.response?.status === "number" && p.response.status >= 400) {
-                    record("network.status", `${p.response.status} ${p.response.url}`);
-                }
+                network.handle(msg.method, p);
                 break;
             default:
                 break;
@@ -352,6 +359,7 @@ async function connectCdp(cdpPort) {
     const navigateFresh = async (url) => {
         // 必须在导航前清空：导航后再清会吞掉 bootstrap 阶段的真实异常。
         problems.length = 0;
+        network.reset();
         await send("Page.navigate", { url });
         const ok = await poll(`!!document.querySelector('[data-testid="inject-local-model"]')`, "lab mounted", 60000);
         if (!ok) throw new Error("Repro lab did not mount within 60s");

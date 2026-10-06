@@ -56,7 +56,7 @@ export function buildLocalComfyGenerationTaskInput(options: {
             mode,
             prompt,
             localComfy: { recipeId: recipe.id, seed: Number(seed) },
-            referenceImages: referenceImages.map((image) => ({ storageKey: image.storageKey, name: image.name, type: image.type, ...(image.width ? { width: image.width } : {}), ...(image.height ? { height: image.height } : {}) })),
+            referenceImages: referenceImages.map((image) => ({ id: image.id, storageKey: image.storageKey, name: image.name, type: image.type, ...(image.width ? { width: image.width } : {}), ...(image.height ? { height: image.height } : {}) })),
             metadata: { ...metadata, clientOperationId, ...(retryOf ? { retryOf } : {}), ...(attemptGroupId ? { attemptGroupId } : {}) },
         },
     };

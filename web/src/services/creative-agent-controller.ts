@@ -4,9 +4,8 @@ import { buildCanvasContext } from "@/lib/canvas/canvas-context-discovery";
 import { applyCreativeAnswers, creativeScenarioPrompt, normalizeCreativeQuestions, CREATIVE_SCENARIOS, type CreativeAnswers } from "@/lib/creation/creative-agent-contract";
 import { assertCreativeBriefSpecifications, creativeNodeId, creativeProposalOps, initialCreativeState, mergeCreativeBrief, normalizeCreativeProposal, readCreativeState, type CreativeAgentState, type CreativeMediaState } from "@/lib/creation/creative-agent-state";
 import { CREATIVE_AGENT_SYSTEM_PROMPT, CREATIVE_AGENT_TOOLS, parseCreativeToolArguments } from "@/lib/creation/creative-agent-tools";
-import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { logicalModelIDForConfig, modelDisplayName, resolveModelRequestConfig, selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
+import { logicalModelIDForConfig, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { creationRuns, type CreationGuard, type CreationRun, type CreationRunDetail, type CreationStatus, type CreationSubmission } from "./api/creation-runs";
 import { parseBackendGenerationResult, prepareBackendGenerationTask, prepareBackendToolGenerationTask } from "./api/generation-task";
 import { queryGenerationTask, waitForGenerationTask, type GenerationTask } from "./api/task-center";
@@ -19,10 +18,13 @@ import { withRemoteUserDataSyncExclusive } from "./local-workspace-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { creativeVideoSpecificationError } from "@/lib/creation/creative-agent-state";
 import { updateCreativePlan } from "@/lib/creation/creative-plan";
+import { productionChecks, productionTimeline, type ProductionState } from "@/lib/creation/production";
+import { createTimelineRenderTask, type TimelineRenderResult } from "./api/timeline-tasks";
+import { creativeMediaConfig, creativeProductionTools, CREATIVE_PRODUCTION_TOOLS_PROMPT } from "@/lib/creation/creative-production-tools";
 
 export type CreativeCanvasAdapter = { canvasId: string; read: () => CanvasSnapshot; apply: (ops: CanvasOperation[]) => Promise<CanvasSnapshot> };
 export type CreativeControllerView = { run?: CreationRun; state: CreativeAgentState; busy: boolean; hasControl: boolean; error?: string };
-type ControllerOptions = { clientKey?: string; config: () => AiConfig; canvas: () => CreativeCanvasAdapter | undefined; onChange: (view: CreativeControllerView) => void; onOpenCanvas: (canvasId: string, runId: string) => void; api?: typeof creationRuns; waitTask?: typeof waitForGenerationTask; queryTask?: typeof queryGenerationTask; ensureAsset?: typeof ensureCanvasNodeAsset };
+type ControllerOptions = { clientKey?: string; config: () => AiConfig; canvas: () => CreativeCanvasAdapter | undefined; ensureCanvas?: (canvasId: string, runId: string) => Promise<void>; onChange: (view: CreativeControllerView) => void; onOpenCanvas: (canvasId: string, runId: string) => void; api?: typeof creationRuns; waitTask?: typeof waitForGenerationTask; queryTask?: typeof queryGenerationTask; ensureAsset?: typeof ensureCanvasNodeAsset; renderTask?: typeof createTimelineRenderTask };
 
 // 单一浏览器执行器；运行事实以本地服务端记录为准，页面只提供就绪的画布适配器。
 export class CreativeAgentController {
@@ -63,10 +65,10 @@ export class CreativeAgentController {
         } finally { this.busy = false; this.emit(); }
     }
 
-    async load(runId?: string, seed?: Partial<CreativeAgentState>, readOnly = false) {
+    async load(runId?: string, seed?: Partial<CreativeAgentState>, readOnly = false, canvasId?: string) {
         await this.action(async () => {
             if (runId) this.accept(await this.api.get(runId, this.abort.signal));
-            else this.accept(await this.api.create({ clientKey: this.options.clientKey || nanoid(), canvasId: this.options.canvas()?.canvasId, state: { ...initialCreativeState(), ...seed } }, this.abort.signal));
+            else this.accept(await this.api.create({ clientKey: this.options.clientKey || nanoid(), canvasId: canvasId || this.options.canvas()?.canvasId, state: { ...initialCreativeState(), ...seed } }, this.abort.signal));
             this.assertLive();
             if (!readOnly) {
                 this.startHeartbeat();
@@ -74,6 +76,7 @@ export class CreativeAgentController {
             }
             this.emit();
         });
+        return this.run!.id;
     }
     private async claim() {
         this.run = await this.api.claim(this.run!.id, { expectedEpoch: this.run!.executionEpoch, owner: this.owner }, this.abort.signal);
@@ -143,6 +146,51 @@ export class CreativeAgentController {
     }
     async configure(patch: Pick<CreativeAgentState, "scene" | "references" | "selectedSkillIds" | "textModel">) { await this.action(async () => { this.state = { ...this.state, ...patch }; await this.save(); }); }
 
+    async saveProduction(patch: Partial<ProductionState>) {
+        await this.action(async () => {
+            if (this.state.production?.renderKey && !this.state.production.result) throw new Error("先恢复或核对当前导出，再调整时间线");
+            this.state = { ...this.state, production: { ...this.state.production, ...patch, ...(patch.timeline ? { result: undefined, renderKey: undefined, renderTaskId: undefined, renderTimeline: undefined } : {}), enabled: true } };
+            await this.save();
+        });
+    }
+
+    async renderProduction() {
+        await this.action(async () => {
+            let production = this.state.production;
+            if (!production?.timeline) throw new Error("请先编排时间线");
+            if (!production.renderKey || production.result) {
+                if (this.state.proposal && production.assembledVersion !== this.state.proposal.version) throw new Error("镜头版本已变化，请重新编排时间线后导出");
+                const timeline = productionTimeline(production.timeline, this.options.canvas()?.read().nodes || []);
+                const issues = productionChecks(timeline);
+                if (issues.length) throw new Error(issues.join("；"));
+                production = { ...production, renderKey: nanoid(), renderTaskId: undefined, result: undefined, renderTimeline: timeline };
+                this.state = { ...this.state, production };
+                // Persist intent before admission; replay uses the same key and immutable snapshot.
+                await this.save();
+            }
+            const task = await (this.options.renderTask || createTimelineRenderTask)({ projectId: this.run!.canvasId || "", clientKey: `${this.run!.id}:${production.renderKey}`, timeline: production.renderTimeline! }, this.abort.signal);
+            production = { ...production, renderTaskId: task.id };
+            this.state = { ...this.state, production }; await this.save();
+            const completed = await this.waitTask(task.id, { signal: this.abort.signal });
+            if (completed.status !== "succeeded") throw new Error(completed.error || "成片任务尚未成功，请在任务中心核对");
+            const result = JSON.parse(completed.resultJson || "{}") as TimelineRenderResult;
+            if (!result.resourceId || !result.durationMs || !result.size) throw new Error("成片回执不完整，请在任务中心核对");
+            this.state = { ...this.state, production: { ...production, result, exports: [...(production.exports || []).filter((item) => item.taskId !== task.id), { taskId: task.id, result }] } };
+            await this.save();
+        });
+    }
+
+    async resetFailedProductionRender() {
+        await this.action(async () => {
+            const production = this.state.production;
+            if (!production?.renderTaskId) throw new Error("提交结果尚未确认，请先恢复并核对导出");
+            const task = await this.queryTask(production.renderTaskId, { signal: this.abort.signal });
+            if (!["failed", "cancelled"].includes(task.status)) throw new Error("导出任务未失败，不能清除已有提交");
+            this.state = { ...this.state, production: { ...production, renderKey: undefined, renderTaskId: undefined, renderTimeline: undefined } };
+            await this.save();
+        });
+    }
+
     async requestModification() {
         await this.action(async () => {
             if (this.state.media.some((item) => ["queued", "running"].includes(item.status))) throw new Error("已有生成还在处理，请继续处理以同步结果，完成后再修改方案。");
@@ -198,11 +246,11 @@ export class CreativeAgentController {
         const skills = await listAddedSkills();
         const prepared = await skillRuntime.prepare({ profile: "creation", prompt, skills: skills.skills || [], selectedSkillIds: this.state.selectedSkillIds });
         this.assertLive();
-        const catalogue = (["image", "video"] as const).flatMap((mode) => selectableModelsByCapability(config, mode).slice(0, 20).map((model) => ({ mode, model, name: modelDisplayName(config, model), capability: modelCapabilityConfigFor(config, model) })));
+        const catalogue = creativeProductionTools(config);
         const canvas = this.options.canvas();
         const imageReferences = this.state.references.filter((reference) => reference.kind === "image" && reference.storageKey);
         const protocol: ResponseInputMessage[] = [
-            { role: "system", content: `${CREATIVE_AGENT_SYSTEM_PROMPT}\n${creativeScenarioPrompt(this.state.scene)}\n用户系统提示：${config.systemPrompt || ""}` },
+            { role: "system", content: `${CREATIVE_AGENT_SYSTEM_PROMPT}\n${CREATIVE_PRODUCTION_TOOLS_PROMPT}\n${creativeScenarioPrompt(this.state.scene)}\n用户系统提示：${config.systemPrompt || ""}` },
             ...this.state.messages.slice(-20).map((message) => ({ role: message.role, content: message.text })),
             { role: "user", content: [{ type: "text", text: JSON.stringify({ brief: this.state.brief, proposal: this.state.proposal, availableModels: catalogue, references: this.state.references, canvas: canvas ? buildCanvasContext(canvas.read()) : { available: false, instruction: "首页不能操作画布" }, currentRequest: prepared.prompt }) }, ...imageReferences.map((reference) => ({ type: "image_url" as const, image_url: { url: reference.storageKey! } }))] },
         ];
@@ -328,6 +376,7 @@ export class CreativeAgentController {
             const linked = await this.api.canvas(this.run.id, this.guard(), this.abort.signal);
             this.run = linked.run;
             await this.save("waiting_canvas");
+            await this.options.ensureCanvas?.(linked.canvasId, this.run.id);
             if (this.options.canvas()?.canvasId === linked.canvasId) await this.applyProposal();
             else { await this.api.release(this.run.id, this.guard()); this.hasControl = false; this.options.onOpenCanvas(linked.canvasId, this.run.id); }
         });
@@ -401,9 +450,11 @@ export class CreativeAgentController {
                 if (!reference || !resourceId || reference.metadata?.status !== "success") throw new Error("引用素材尚未就绪，请选择实际可用的资源");
                 return { id: reference.id, name: reference.title || "参考图", type: reference.metadata?.mimeType || "image/png", storageKey, dataUrl: resourceFileUrl(resourceId) };
             });
-            const config = { ...this.requestConfig(item.model), count: "1", ...(item.size ? { size: item.size } : {}), ...(item.seconds !== undefined ? { videoSeconds: String(item.seconds) } : {}), ...(item.quality ? item.mode === "video" ? { vquality: item.quality } : { quality: item.quality } : {}) };
-            const request = await prepareBackendGenerationTask({ projectId: this.run!.canvasId, mode: item.mode, prompt: node.metadata?.prompt || "", config, referenceImages, signal: this.abort.signal, metadata: { source: "creative-agent", creationRunId: this.run!.id, nodeId: node.id, conversationId: this.run!.id } });
-            request.input = { ...request.input, nodeId: node.id };
+            const mediaConfig = creativeMediaConfig(this.options.config(), item.model);
+            const config = { ...mediaConfig, count: "1", ...(item.size ? { size: item.size } : {}), ...(item.seconds !== undefined ? { videoSeconds: String(item.seconds) } : {}), ...(item.quality ? item.mode === "video" ? { vquality: item.quality } : { quality: item.quality } : {}) };
+            const request = await prepareBackendGenerationTask({ projectId: this.run!.canvasId, mode: item.mode, prompt: node.metadata?.prompt || "", config, referenceImages, retryOf: media.retryOf, signal: this.abort.signal, metadata: { source: "creative-agent", creationRunId: this.run!.id, nodeId: node.id, conversationId: this.run!.id } });
+            request.model = item.model;
+            request.input = { ...request.input, nodeId: node.id, metadata: { ...request.input?.metadata as Record<string, unknown>, clientOperationId: `creation:${this.run!.id}:v${proposal.version}:${media.ref}:${media.attempt}` } };
             const submission = await this.api.prepare(this.run!.id, { ...this.guard(), itemKey: `media:v${proposal.version}:${media.ref}:${media.attempt}`, proposalVersion: proposal.version, request }, this.abort.signal);
             this.upsertSubmission(submission); this.setMedia(media.ref, { submissionId: submission.id }); ids.push(submission.id);
         }
@@ -479,6 +530,7 @@ export class CreativeAgentController {
             }
             if (!this.state.canvasApplied && this.state.proposal && this.run!.approvedProposalHash && this.run!.approvedProposalVersion === this.state.proposal.version) {
                 const linked = await this.api.canvas(this.run!.id, this.guard(), this.abort.signal); this.run = linked.run;
+                await this.options.ensureCanvas?.(linked.canvasId, this.run.id);
                 if (this.options.canvas()?.canvasId !== linked.canvasId) { await this.save("waiting_canvas"); await this.api.release(this.run.id, this.guard()); this.hasControl = false; this.options.onOpenCanvas(linked.canvasId, this.run.id); return; }
                 await this.applyProposal(); return;
             }
@@ -541,7 +593,10 @@ export class CreativeAgentController {
             this.run = await this.api.approveProposal(this.run!.id, { ...this.guard(), revision: this.run!.revision, proposalVersion: intent.proposalVersion, proposal, ops: operations }, this.abort.signal);
         }
         this.guard();
-        this.setMedia(intent.ref, { status: "pending", attempt: intent.attempt, submissionId: undefined, taskId: undefined, error: undefined });
+        const previous = this.state.media.find((media) => media.ref === intent.ref)!;
+        // Keep the parent across the persisted reset and reconnect so native admission
+        // can reject a redo while the original upstream submission is still uncertain.
+        this.setMedia(intent.ref, { status: "pending", attempt: intent.attempt, retryOf: previous.taskId || previous.retryOf, submissionId: undefined, taskId: undefined, error: undefined });
         this.state = { ...this.state, pendingRedo: undefined };
         await this.save("running");
         await this.prepareMediaBatch();

@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "notes": "本地标签是检索假设，不是视频质量评价；上游刷新只改 motion-references.json。",
+  "entries": {
+    "2104148233106723099": {
+      "tags": ["technology", "product", "object-relay", "causality", "camera-push", "kinetic-type", "impact-reveal", "diagram-morph", "continuous-shape-transition", "spring", "minimal", "beat-sync", "low-text-density"],
+      "basis": "source_code_read",
+      "reason": "已读固定提交的 timeline.ts 与 README；红点跨幕承接、画面和声音共用事件时码。",
+      "reviewState": "static_frame_reviewed",
+      "segment": { "fromSeconds": 0, "toSeconds": 30 },
+      "reviewEvidence": {
+        "method": "sampled_contact_sheet",
+        "reviewedAt": "2026-10-05T14:51:44Z",
+        "frameTimesSeconds": [0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30],
+        "artifactRelativePath": "disposable/motion-director-demo/reference-review/2104148233106723099-0-30s.jpg",
+        "mediaSha256": "4cecce66c0d81e46e8c175a9c7389adcc21aeaabc9cff5704c24caade3f118b4",
+        "observations": ["红色标记跨多个构图承担焦点；命令条近景与日历整体形成层级；关键短句与片尾标记清楚。"],
+        "limitations": ["每两秒抽样，未连续播放，未试听；不能证明运动曲线、接触或同步。"]
+      },
+      "sourceUrls": ["https://github.com/Leonxlnx/claude-launchvideo/blob/f0906e8629fa524c7cedc1ac959bf987005ee846/src/timeline.ts", "https://github.com/Leonxlnx/claude-launchvideo/blob/f0906e8629fa524c7cedc1ac959bf987005ee846/README.md"]
+    },
+    "2103273003555402193": {
+      "tags": ["technology", "product", "continuous-shape-transition", "diagram-morph", "camera-push", "spring", "minimal", "no-glow", "beat-sync", "low-text-density", "direct-manipulation"],
+      "basis": "source_prompt_read",
+      "reason": "上游原始制作规格明确单形状连续变化、时间纯函数、弹簧和逐拍预览，并明确禁止 glow。",
+      "reviewState": "static_frame_reviewed",
+      "segment": { "fromSeconds": 0, "toSeconds": 11 },
+      "reviewEvidence": {
+        "method": "sampled_contact_sheet",
+        "reviewedAt": "2026-10-05T14:51:44Z",
+        "frameTimesSeconds": [0,1,2,3,4,5,6,7,8,9,10,11],
+        "artifactRelativePath": "disposable/motion-director-demo/reference-review/2103273003555402193-0-11s.jpg",
+        "mediaSha256": "02f4145dc0b3afb187b6ebfab39760d3231746647f91678287102f19ee46d8c0",
+        "observations": ["浅灰底与黑白控件对比克制，按钮、播放器、滑杆、开关与图表保持中心焦点；抽样未见满屏辉光。"],
+        "limitations": ["每秒抽样，未连续播放，未试听；不能证明无剪切、闭环或弹簧曲线。"]
+      },
+      "sourceUrls": ["https://github.com/guanmo-ai/awesome-ai-motion/blob/203472a514a4d41c12b1cee8e82423b5ca311186/cases/2103273003555402193.md"]
+    },
+    "2103315922098470926": {
+      "tags": ["technology", "showreel", "continuous-shape-transition", "camera-push", "impact-reveal", "low-text-density"],
+      "basis": "upstream_metadata",
+      "reason": "短动效类别与作品标题适合初筛镜头/几何转场；具体机制待看实际片段。",
+      "reviewState": "static_frame_reviewed",
+      "segment": { "fromSeconds": 0, "toSeconds": 11 },
+      "reviewEvidence": {
+        "method": "sampled_contact_sheet",
+        "reviewedAt": "2026-10-05T14:51:44Z",
+        "frameTimesSeconds": [0,1,2,3,4,5,6,7,8,9,10,11],
+        "artifactRelativePath": "disposable/motion-director-demo/reference-review/2103315922098470926-0-11s.jpg",
+        "mediaSha256": "4b721a9edf421733a80b4714a68477d63ce1dd67307d1cbca1ff8d8a019eac51",
+        "observations": ["几何主体与大字分段承担焦点；4至5秒有缓动机制示意，6至7秒中心圆/星状态；后段图案密集。"],
+        "limitations": ["每秒抽样，未连续播放，未试听；重量、缓动与转场未动态验证。"]
+      },
+      "sourceUrls": ["https://x.com/stephanlivera/status/2103315922098470926"]
+    },
+    "2103918792845963545": {
+      "tags": ["technology", "product", "character", "kinetic-type", "object-relay", "causality", "low-text-density"],
+      "basis": "upstream_metadata",
+      "reason": "上游标题/分类指向角色讲解产品，适合筛选口播与产品画面的配合参考。",
+      "reviewState": "static_frame_reviewed",
+      "segment": { "fromSeconds": 0, "toSeconds": 11 },
+      "reviewEvidence": {
+        "method": "sampled_contact_sheet",
+        "reviewedAt": "2026-10-05T14:51:44Z",
+        "frameTimesSeconds": [0,1,2,3,4,5,6,7,8,9,10,11],
+        "artifactRelativePath": "disposable/motion-director-demo/reference-review/2103918792845963545-0-11s.jpg",
+        "mediaSha256": "f210cf62b708de7aab7974c18197003843b22a26274fd01bb6c8e18fefd9f672",
+        "observations": ["角色造型在抽样构图中稳定并为文字、产品卡片让位；关键句到手机界面的层级清楚，后段卡片密度较高。"],
+        "limitations": ["每秒抽样，未连续播放，未试听；人物实际动作、嘴形与交接未验证。"]
+      },
+      "sourceUrls": ["https://x.com/achxvi/status/2103918792845963545"]
+    },
+    "2102591147927654847": {
+      "tags": ["technology", "explanation", "camera-push", "focus-shift", "causality", "diagram-morph", "direct-manipulation", "spatial"],
+      "basis": "upstream_metadata",
+      "reason": "对焦实验室的任务描述明确镜片与焦点关系；用途匹配，实际运镜尚未审看。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": ["https://sael.net/plane-of-focus/"]
+    },
+    "2103099194693271874": {
+      "tags": ["character", "continuity", "material-shift", "light-bridge", "portal-passage", "spatial", "story"],
+      "basis": "upstream_metadata",
+      "reason": "上游制作指令说明固定角色及十二种世界；借鉴身份合同，不能推定已验证所有接缝。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": ["https://x.com/pradeepXkapoor/status/2103176289482154373"]
+    },
+    "2102514581684052169": {
+      "tags": ["character", "story", "continuity", "kinetic-type", "beat-sync", "spring", "impact-reveal", "camera-push", "particle-convergence"],
+      "basis": "source_code_read",
+      "reason": "已读 PDoomVideo 固定版 ANIMATION_GUIDE 和 STORYBOARD，明确章节隔离、纯函数、稳定 hash 与歌词安全区。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": ["https://github.com/JohnHeibel/PDoomVideo/blob/fa546a38092e75f2b079e6a86d6abc54dd525d17/ANIMATION_GUIDE.md", "https://github.com/JohnHeibel/PDoomVideo/blob/fa546a38092e75f2b079e6a86d6abc54dd525d17/STORYBOARD.md"]
+    },
+    "2103683057689522564": {
+      "tags": ["technology", "explanation", "diagram-morph", "causality", "flow-to-map", "layer-peel", "constraint-reveal"],
+      "basis": "upstream_metadata",
+      "reason": "Transformer 知识讲解案例，可作为机制/数学关系的候选，具体节点关系待动态审看。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": []
+    },
+    "2102737776219168939": {
+      "tags": ["technology", "explanation", "diagram-morph", "causality", "feedback-loop", "state-propagation", "token-routing", "number-resolve"],
+      "basis": "upstream_metadata",
+      "reason": "标题明确神经网络训练过程，适合检索训练反馈与状态传播；机制标签为待审看候选。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": []
+    },
+    "2106208810604081208": {
+      "tags": ["technology", "explanation", "diagram-morph", "causality", "token-routing", "state-propagation", "semantic-highlight"],
+      "basis": "upstream_metadata",
+      "reason": "可编辑 LLM 代码讲解片，供技术解释与信息流参考初筛。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": []
+    },
+    "2106060741732147653": {
+      "tags": ["technology", "explanation", "diagram-morph", "causality", "spatial", "number-resolve", "layer-peel"],
+      "basis": "upstream_metadata",
+      "reason": "AI 量化三维讲解片标题匹配数据表示改变，具体画面需动态审看。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": []
+    },
+    "2102786378282987591": {
+      "tags": ["spatial", "ripple-response", "physics", "direct-manipulation", "material"],
+      "basis": "upstream_metadata",
+      "reason": "实时浅水与交互涟漪，供受力响应候选；材质与光效需动态审看。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": []
+    },
+    "2105783511433318451": {
+      "tags": ["spatial", "material", "glow", "physics"],
+      "basis": "upstream_metadata",
+      "reason": "标题明确发光水母，用作辉光排除项依据。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": []
+    },
+    "2104200939095904322": {
+      "tags": ["physics", "momentum-carry", "elastic-contact", "spring", "continuous-shape-transition", "spatial"],
+      "basis": "upstream_metadata",
+      "reason": "物理之美一镜到底标题可供运动受力与连续承接候选，未审看具体接触动作。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": []
+    },
+    "2104837895773417649": {
+      "tags": ["material", "layer-peel", "object-wipe", "continuous-shape-transition", "product"],
+      "basis": "upstream_metadata",
+      "reason": "折纸发布短片供层次展开和材质承接初筛。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": []
+    },
+    "2103288413969621231": {
+      "tags": ["material", "phrase-build", "particle-convergence", "kinetic-type", "light-bridge"],
+      "basis": "upstream_metadata",
+      "reason": "逐笔生长的水墨宣纸标题供逐步呈现与材质候选，未验证字形和笔触时间。",
+      "reviewState": "metadata_only",
+      "segment": null,
+      "sourceUrls": []
+    }
+  }
+}

@@ -1,17 +1,18 @@
 import type { CanvasOperation, CanvasSnapshot } from "@/lib/canvas/canvas-operation-contract";
 import { buildCanvasWorkflowOps } from "@/lib/canvas/canvas-workflow-builder";
-import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import { selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
+import { type AiConfig } from "@/stores/use-config-store";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import type { ResponseInputMessage } from "@/services/api/image";
 import { dynamicCreativePlan, type CreativeDynamicPlan } from "./creative-plan";
 import { normalizeCreativeField } from "./creative-agent-contract";
+import { creativeMediaModels, creativeToolCapability, creativeRunningHubWorkflow } from "./creative-production-tools";
 import { CREATIVE_SCENARIOS, type CreativeAnswers, type CreativeBrief, type CreativeGenerationItem, type CreativePlan, type CreativeProposal, type CreativeQuestionRequest, type CreativeScenarioId } from "./creative-agent-contract";
 
 export type CreativeReference = { id: string; title: string; kind: "image" | "text"; assetId?: string; storageKey?: string; text?: string; mimeType?: string; width?: number; height?: number };
 export type CreativeMessage = { id: string; role: "user" | "assistant"; text: string; question?: CreativeQuestionRequest; answers?: CreativeAnswers; proposal?: CreativeProposal };
-export type CreativeMediaState = { ref: string; nodeId: string; attempt: number; submissionId?: string; taskId?: string; status: "pending" | "queued" | "running" | "ready" | "failed" | "write_failed"; storageKey?: string; error?: string; failureKind?: "generation" | "observation" };
+export type CreativeMediaState = { ref: string; nodeId: string; attempt: number; submissionId?: string; taskId?: string; retryOf?: string; status: "pending" | "queued" | "running" | "ready" | "failed" | "write_failed"; storageKey?: string; error?: string; failureKind?: "generation" | "observation" };
 export type CreativeAgentState = {
+    production?: import("./production").ProductionState;
     schemaVersion: 1; scene: CreativeScenarioId; brief: CreativeBrief; messages: CreativeMessage[];
     references: CreativeReference[]; selectedSkillIds: string[]; textModel?: string;
     questions?: CreativeQuestionRequest; answers?: CreativeAnswers; proposal?: CreativeProposal;
@@ -79,7 +80,7 @@ export function normalizeCreativeProposal(raw: unknown, id: string, version: num
         const item = record(value), ref = required(item.ref, "生成目标"), node = nodes.find((candidate) => candidate.ref === ref);
         if (!node || (node.kind !== "image" && node.kind !== "video") || node.kind !== item.mode || existingAssets[ref]) throw new Error("生成任务与媒体节点不匹配，已有素材不能重复生成");
         const model = required(item.model, "生成模型");
-        if (!selectableModelsByCapability(config, node.kind).includes(model)) throw new Error(`节点“${node.title}”需要${node.kind === "video" ? "视频" : "图片"}模型，所选模型不支持该用途或已不可用：${model}。请从 availableModels 中选择 mode=${node.kind} 的模型重新提交方案。`);
+        if (!creativeMediaModels(config, node.kind).includes(model)) throw new Error(`节点“${node.title}”需要${node.kind === "video" ? "视频" : "图片"}模型，所选模型不支持该用途或已不可用：${model}。请从 availableModels 中选择 mode=${node.kind} 的模型重新提交方案。`);
         const referenceRefs: string[] = [];
         const referenceNodeIds = new Set<string>();
         const inputReferences = new Set([
@@ -118,7 +119,7 @@ export function normalizeCreativeProposal(raw: unknown, id: string, version: num
 }
 
 export function assertCreativeMediaCapability(item: CreativeGenerationItem, config: AiConfig, referenceCount: number) {
-    const capability = modelCapabilityConfigFor(config, item.model);
+    const capability = creativeToolCapability(config, item.model);
     if (item.mode === "video") {
         const video = capability.video;
         if (!video) throw new Error("当前视频模型缺少可验证的能力配置");
@@ -153,6 +154,8 @@ export function creativeProposalOps(runId: string, proposal: CreativeProposal, s
         if (op.type !== "add_node") return op;
         const node = proposal.workflow.nodes.find((item) => op.id === creativeNodeId(runId, proposal.version, item.ref));
         const item = proposal.generationItems.find((item) => item.ref === node?.ref);
+        const workflow = item && creativeRunningHubWorkflow(config, item.model);
+        if (workflow) op.metadata = { ...op.metadata, workflowProvider: "runninghub", runningHubWorkflowId: workflow.workflowId, runningHubWorkflowKind: workflow.kind === "app" ? "app" : "workflow" };
         const asset = (proposal.extra as { existingAssets?: Record<string, CreativeReference> } | undefined)?.existingAssets?.[node?.ref || ""];
         const depth = column(node!.ref), y = rows.get(depth) || 80;
         rows.set(depth, y + (op.height || 405) + 120);
@@ -176,7 +179,7 @@ export const creativeNodeId = (runId: string, version: number, ref: string) => `
 export function creativeVideoSpecificationError(item: CreativeGenerationItem | undefined, output: { durationMs?: number; width?: number; height?: number }): string | undefined {
     if (item?.mode !== "video") return;
     if (item.seconds && output.durationMs && Math.abs(output.durationMs - item.seconds * 1000) > 250) return `实际视频为 ${(output.durationMs / 1000).toFixed(2)} 秒，与方案 ${item.seconds} 秒不符。已保留产物，请核对后选择是否重做。`;
-    const ratio = item.size?.match(/^(\d+):(\d+)$/);
+    const ratio = item.size?.match(/^(\d+)[x:](\d+)$/);
     if (ratio && output.width && output.height && Math.abs(output.width / output.height / (Number(ratio[1]) / Number(ratio[2])) - 1) > 0.02) return `实际视频为 ${output.width}×${output.height}，与方案 ${item.size} 比例不符。已保留产物，请核对后选择是否重做。`;
 }
 export function creativePlan(state: CreativeAgentState): CreativePlan | undefined {

@@ -28,7 +28,6 @@ func renderTestProject(storageKey string) renderProject {
 			StartMs:       0,
 			DurationMs:    2000,
 			SourceStartMs: 0,
-			Volume:        1,
 			DirectMedia: &struct {
 				ID         string `json:"id"`
 				Kind       string `json:"kind"`

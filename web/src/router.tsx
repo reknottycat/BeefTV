@@ -20,6 +20,7 @@ const ProjectDetailPage = lazy(loadProjectDetailPage);
 const ProjectsPage = lazy(loadProjectsPage);
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const LocalComfyPage = lazy(() => import("@/pages/local-comfy"));
+const ProductionPage = lazy(() => import("@/pages/production"));
 const UserLayout = lazy(() => import("@/layouts/user-layout"));
 const RequireFeature = lazy(() => import("@/components/workspace/require-feature").then((module) => ({ default: module.RequireFeature })));
 
@@ -87,6 +88,7 @@ export const router = createBrowserRouter([
         children: [
             { path: "/", element: deferred(<HomePage />) },
             { path: "/create", element: deferred(<CreatePage />) },
+            { path: "/production", element: deferred(<ProductionPage />) },
             {
                 path: "/tasks",
                 element: deferred(<TasksPage />),

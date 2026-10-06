@@ -9,6 +9,8 @@ BeefTV 是一个本地优先、轻量、AI Native 的视频工作台。本页只
 - [本地优先架构](local-first-architecture.md)
 - [桌面端本地开发](desktop-local-development.md)
 - [桌面端发布](desktop-release.md)
+- [动效导演台](motion-director.md)
+- [画布时间线预览](canvas-timeline-preview.md)
 
 ## 配置与数据
 
@@ -30,6 +32,8 @@ BeefTV 是一个本地优先、轻量、AI Native 的视频工作台。本页只
 - [AI 审美批改插件](content/docs/plugins/ai-art-critique.mdx)
 
 ## 项目治理
+
+- [自动制作](content/docs/overview/automatic-production.mdx)
 
 - [贡献指南](../CONTRIBUTING.md)
 - [安全策略](../SECURITY.md)

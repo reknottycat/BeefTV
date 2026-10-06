@@ -47,6 +47,17 @@ and cgo bindings distributed under their package license.
 
 ## Bundled runtime files
 
+### Nomi timeline playback helpers
+
+`web/src/lib/timeline/timeline-playback.ts` adapts the playback-layer selection
+and source-time helper from Nomi, Copyright 2025 Beq, under Apache-2.0.
+The source is pinned to commit `92719b5e9914eef144298d29c6388ffa22c248b9`:
+<https://github.com/aqm857886159/Nomi/blob/92719b5e9914eef144298d29c6388ffa22c248b9/src/workbench/player/timelinePlayback.ts>.
+Changes use BeefTV clip types, milliseconds, source bounds, and an independent
+preview clock. The original license is distributed in
+`web/public/licenses/nomi-apache-2.0.txt`. This reuse does not include Nomi's
+later AGPL releases. BeefTV-authored material retains its MIT license.
+
 | Repository paths | Origin and terms |
 | --- | --- |
 | `web/public/mediapipe/wasm/*`, `web/public/canvas/models/blaze-face-full-range-sparse.tflite` | MediaPipe Tasks Vision distribution, Apache-2.0 |

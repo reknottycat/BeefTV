@@ -205,6 +205,10 @@ func (s *Service) validateLocalComfyInput(userID string, req CreateTaskRequest, 
 	for key := range input {
 		switch key {
 		case "mode", "prompt", "config", "localComfy", "referenceImages", "referenceVideos", "referenceAudios", "mask", "metadata":
+		case "nodeId":
+			if req.creationPrepare == nil {
+				return nil, "", localComfyError(400, "invalid_local_comfy_input", "节点绑定仅由已批准的创作运行使用")
+			}
 		default:
 			return nil, "", localComfyError(400, "invalid_local_comfy_input", "本地任务包含未支持的字段")
 		}
@@ -331,12 +335,12 @@ func (s *Service) createLocalComfyTask(userID string, req CreateTaskRequest, tas
 	input["prompt"] = prompt
 	encoded, _ := json.Marshal(input)
 	id := localComfyTaskID(userID, operationID)
-	if existing, err := s.repo.TaskForUser(userID, id); err == nil {
+	if existing, err := s.repo.TaskForUser(userID, id); err == nil && req.creationPrepare == nil {
 		if existing.ProjectID != req.ProjectID || existing.Type != taskType || existing.Model != req.Model || existing.Prompt != prompt || !localComfyInputsEqual(existing.InputJSON, string(encoded)) {
 			return nil, localComfyError(409, "client_operation_id_conflict", "请求标识已用于另一组参数，请显式创建新的生成请求")
 		}
 		return taskForOutput(*existing), nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, taskStorageError(err)
 	}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
@@ -371,6 +375,9 @@ func (s *Service) createLocalComfyTask(userID string, req CreateTaskRequest, tas
 		return nil, err
 	}
 	task := model.Task{ID: id, UserID: userID, TraceID: req.TraceID, RequestID: req.RequestID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待本地配方调度", Progress: 0, Prompt: prompt, Operation: req.Operation, Provider: "local-comfy", Model: req.Model, InputJSON: string(encoded)}
+	if req.creationPrepare != nil {
+		return &task, nil
+	}
 	if err := s.createTaskWithinStorageQuota(&task, policy); err != nil {
 		// Database uniqueness is the cross-process fence; replay the committed task.
 		if existing, lookupErr := s.repo.TaskForUser(userID, id); lookupErr == nil && localComfyInputsEqual(existing.InputJSON, task.InputJSON) && existing.ProjectID == task.ProjectID && existing.Model == task.Model && existing.Type == task.Type {

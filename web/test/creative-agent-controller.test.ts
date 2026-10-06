@@ -7,6 +7,8 @@ import { defaultConfig } from "../src/stores/use-config-store";
 import type { GenerationTask } from "../src/services/api/task-center";
 import { CanvasNodeType } from "../src/types/canvas";
 import { CREATIVE_AGENT_SYSTEM_PROMPT, CREATIVE_AGENT_TOOLS } from "../src/lib/creation/creative-agent-tools";
+import { usePluginStore } from "../src/stores/use-plugin-store";
+import { runningHubCreativeModel } from "../src/lib/creation/creative-production-tools";
 
 test("首页创造规划请求使用自动工具选择", async () => {
     const source = await Bun.file(new URL("../src/services/creative-agent-controller.ts", import.meta.url)).text();
@@ -45,6 +47,32 @@ function harness(state: CreativeAgentState, status: CreationRun["status"] = "pau
 const proposal = { id: "p", version: 1, title: "方案", summary: "摘要", markdown: "内容", deliverables: [], workflow: { nodes: [], edges: [], autoRun: false as const }, generationItems: [] };
 const submission = (id: string, itemKey: string, taskId?: string): CreationSubmission => ({ id, runId: "run", itemKey, requestHash: "hash", taskId, execution: { model: "model", configHash: "execution" } });
 
+test("自动制作把 DGX 与 RunningHub 方案转成真实通道请求，准备阶段不直调供应商", async () => {
+    const previous = usePluginStore.getState().runtimeStatuses;
+    usePluginStore.setState({ runtimeStatuses: { ...previous, "runninghub-workflow-provider": "enabled" } });
+    const workflow = { workflowId: "test-app", kind: "app" as const, capability: "image" as const, fields: [{ nodeId: "1", fieldName: "text", source: "prompt", fieldType: "string" }] };
+    try {
+        for (const toolModel of ["local-comfy:qwen_image_2_1", runningHubCreativeModel(workflow)]) {
+            const config = { ...defaultConfig, localComfyModels: [{ id: "qwen_image_2_1", name: "Qwen", mode: "t2i", reference_slots: 0, ready: true }], localComfyGenerationEnabled: true, runningHub: { ...defaultConfig.runningHub, enabled: true, apiKey: "TEST", baseUrl: "https://www.runninghub.cn", workflows: [workflow] } };
+            const toolsProposal = { ...proposal, workflow: { ...proposal.workflow, nodes: [{ ref: "shot", kind: "image" as const, title: "镜头", prompt: "工具测试" }] }, generationItems: [{ ref: "shot", mode: "image" as const, model: toolModel }] };
+            const h = harness({ ...initialCreativeState(), proposal: toolsProposal, canvasApplied: true, media: [{ ref: "shot", nodeId: "shot", attempt: 1, status: "pending" }] }, "running", [], undefined, true, config);
+            h.snapshot().nodes[0]!.metadata = { prompt: "工具测试" };
+            let captured: Parameters<typeof creationRuns.prepare>[1] | undefined;
+            h.api.prepare = async (_id, input) => { captured = input; throw new Error("TEST_STOP_AT_PREPARE"); };
+            try {
+                await h.controller.load("run");
+                await expect(h.controller.resume()).rejects.toThrow("TEST_STOP_AT_PREPARE");
+                expect(captured!.request.model).toBe(toolModel);
+                expect(captured!.request.provider).toBe(toolModel.startsWith("local-comfy:") ? "local-comfy" : "runninghub");
+                expect(captured!.request.input?.metadata?.clientOperationId).toBe("creation:run:v1:shot:1");
+                if (toolModel.startsWith("runninghub:")) expect(captured!.request.input?.config?.webappId).toBe("test-app");
+                else expect(captured!.request.input?.localComfy).toEqual({ recipeId: "qwen_image_2_1", seed: 0 });
+                expect(h.counters().executions).toBe(0);
+            } finally { h.controller.dispose(); }
+        }
+    } finally { usePluginStore.setState({ runtimeStatuses: previous }); }
+});
+
 test("本地运行时自动准入规划，不进入 waiting_execution", async () => {
     const quote = submission("plan", "planning:key");
     const completed = { id: "task", status: "succeeded", resultJson: JSON.stringify({ toolCalls: [{ id: "first", type: "function", function: { name: "creative_respond", arguments: JSON.stringify({ message: "完成" }) } }] }) } as GenerationTask;
@@ -55,6 +83,24 @@ test("本地运行时自动准入规划，不进入 waiting_execution", async ()
         await h.controller.resume();
         expect(h.view().quote).toBeUndefined();
         expect(h.view().run?.status).not.toBe("waiting_execution");
+    } finally { h.controller.dispose(); }
+});
+
+test("H3 制作请求保留获批参考节点身份和重做父任务", async () => {
+    const model = "local-comfy:h3_i2v_turbo4";
+    const config = { ...defaultConfig, localComfyModels: [{ id: "h3_i2v_turbo4", name: "H3", mode: "i2v", reference_slots: 1, ready: true }], localComfyGenerationEnabled: true };
+    const toolsProposal = { ...proposal, workflow: { ...proposal.workflow, nodes: [{ ref: "shot", kind: "video" as const, title: "镜头", prompt: "工具测试", referenceNodeIds: ["approved-frame"] }] }, generationItems: [{ ref: "shot", mode: "video" as const, model, size: "864x480", seconds: 124 / 24 }] };
+    const h = harness({ ...initialCreativeState(), proposal: toolsProposal, canvasApplied: true, media: [{ ref: "shot", nodeId: "shot", attempt: 2, retryOf: "original-h3-task", status: "pending" }] }, "running", [], undefined, true, config);
+    h.snapshot().nodes[0]!.metadata = { prompt: "工具测试" };
+    h.snapshot().nodes.push({ id: "approved-frame", type: CanvasNodeType.Image, title: "首帧", position: { x: 0, y: 0 }, width: 864, height: 480, metadata: { storageKey: "resource:owned-frame", status: "success", mimeType: "image/png" } });
+    let captured: Parameters<typeof creationRuns.prepare>[1] | undefined;
+    h.api.prepare = async (_id, input) => { captured = input; throw new Error("TEST_STOP_AT_PREPARE"); };
+    try {
+        await h.controller.load("run");
+        await expect(h.controller.resume()).rejects.toThrow("TEST_STOP_AT_PREPARE");
+        expect(captured!.request.input?.referenceImages).toMatchObject([{ id: "approved-frame", storageKey: "resource:owned-frame" }]);
+        expect(captured!.request.input?.metadata).toMatchObject({ retryOf: "original-h3-task", clientOperationId: "creation:run:v1:shot:2" });
+        expect(h.counters().executions).toBe(0);
     } finally { h.controller.dispose(); }
 });
 

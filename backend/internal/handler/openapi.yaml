@@ -25,6 +25,40 @@ tags:
   - name: admin
   - name: beefapi
 paths:
+  /timeline/renders:
+    post:
+      tags: [tasks]
+      summary: 按固定时间线快照提交本地 MP4 渲染
+      description: |
+        使用本机 FFmpeg/FFprobe 合成画面与独立音轨，实际检查通过后才写入资源。
+        clientKey 在用户范围内复用同一任务；相同 key 配不同快照返回冲突。
+        字幕默认另附 SRT，burnSubtitles=true 要求烧录，烧录失败不降级。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [timeline]
+              properties:
+                projectId:
+                  type: string
+                clientKey:
+                  type: string
+                  maxLength: 128
+                burnSubtitles:
+                  type: boolean
+                  default: false
+                timeline:
+                  type: object
+                  description: TimelineProject v2，tracks/clips/durationMs；媒体用 directMedia.storageKey=resource:id
+      responses:
+        "200":
+          description: 信封 data 为统一任务；成功 resultJson 含 resourceId/fileName/size/durationMs/subtitleSrt
+        "400":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
   /beefapi/connection:
     get:
       tags: [beefapi]

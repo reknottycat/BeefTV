@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - main
+      - feat/motion-director
     paths:
       - 'web/**'
       - '.github/workflows/director-e2e.yml'

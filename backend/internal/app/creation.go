@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 
@@ -317,10 +318,31 @@ func (s *Service) ChangeCreationRun(userID, id, action string, req CreationReque
 
 func (s *Service) prepareCreationTask(userID string, req CreateTaskRequest) (*model.Task, string, error) {
 	config, _ := req.Input["config"].(map[string]any)
-	if req.LogicalModelID == "" && strings.TrimSpace(stringValue(config["channelId"])) == "" {
+	localTool := strings.HasPrefix(req.Model, localComfyModelPrefix) && req.Provider == "local-comfy"
+	workflowTool := taskInputUsesWorkflowProvider(req.Input) && strings.HasPrefix(stringValue(config["interfaceType"]), "runninghub-workflow-")
+	if workflowTool {
+		parts := strings.SplitN(req.Model, ":", 3)
+		if len(parts) != 3 || parts[0] != "runninghub" {
+			return nil, "", BadAuthRequest("RunningHub 执行项必须使用已登记工具标识")
+		}
+		upstreamID, decodeErr := url.PathUnescape(parts[2])
+		actualID := strings.TrimSpace(stringValue(config["workflowId"]))
+		if parts[1] == "app" {
+			actualID = strings.TrimSpace(stringValue(config["webappId"]))
+		} else if parts[1] != "workflow" || strings.TrimSpace(stringValue(config["webappId"])) != "" {
+			return nil, "", BadAuthRequest("RunningHub 工具类型与执行配置不符")
+		}
+		if decodeErr != nil || upstreamID == "" || upstreamID != actualID {
+			return nil, "", BadAuthRequest("RunningHub 工具标识与实际条目不符")
+		}
+		if stringValue(config["interfaceType"]) != "runninghub-workflow-"+stringValue(req.Input["mode"]) {
+			return nil, "", BadAuthRequest("RunningHub 用途与任务模式不符")
+		}
+	}
+	if !localTool && !workflowTool && req.LogicalModelID == "" && strings.TrimSpace(stringValue(config["channelId"])) == "" {
 		return nil, "", BadAuthRequest("智能创作目前仅支持后端受管模型，请在原入口使用其他渠道")
 	}
-	if taskInputUsesWorkflowProvider(req.Input) || isTextReplayTaskRequest(req.Input) {
+	if (taskInputUsesWorkflowProvider(req.Input) && !workflowTool) || isTextReplayTaskRequest(req.Input) {
 		return nil, "", BadAuthRequest("智能创作不支持本机、工作流或文本回放任务")
 	}
 	// System selectors are the only authority; discard frontend sentinel credentials.
@@ -330,15 +352,38 @@ func (s *Service) prepareCreationTask(userID string, req CreateTaskRequest) (*mo
 			safeConfig[key] = value
 		}
 	}
-	config = safeConfig
-	req.Input["config"] = safeConfig
-	if err := validateCreationJSON(req); err != nil {
+	if !workflowTool && !localTool {
+		config = safeConfig
+		req.Input["config"] = safeConfig
+	} else if err := s.decryptTaskSecrets(req.Input); err != nil {
+		return nil, "", err
+	}
+	validationRequest := req
+	if workflowTool {
+		// Connection secrets belong only to the encrypted execution snapshot,
+		// never to plan/state data. Validate every other field without that transport.
+		validationRequest.Input = mergeCreationMaps(req.Input, nil)
+		publicConfig := mergeCreationMaps(config, nil)
+		for _, key := range []string{"baseUrl", "apiKey", "runningHubWalletApiKey", "runningHubUploadApiKey"} {
+			delete(publicConfig, key)
+		}
+		// The shared frontend builder explicitly sends an empty header list.
+		// Only that empty transport value is harmless; populated headers stay forbidden.
+		if headers, ok := publicConfig["headers"].([]any); ok && len(headers) == 0 {
+			delete(publicConfig, "headers")
+		}
+		validationRequest.Input["config"] = publicConfig
+	}
+	if err := validateCreationJSON(validationRequest); err != nil {
 		return nil, "", err
 	}
 	if req.Type != "canvas_text" && req.Type != "text" && req.Type != "canvas_image" && req.Type != "canvas_video" {
 		return nil, "", BadAuthRequest("智能创作任务类型不受支持")
 	}
 	expectedMode := map[string]string{"text": "text", "canvas_text": "text", "canvas_image": "image", "canvas_video": "video"}[req.Type]
+	if (localTool || workflowTool) && expectedMode == "text" {
+		return nil, "", BadAuthRequest("媒体工具不能用作导演文本模型")
+	}
 	if stringValue(req.Input["mode"]) != expectedMode || strings.TrimSpace(stringValue(req.Input["prompt"])) != strings.TrimSpace(req.Prompt) {
 		return nil, "", BadAuthRequest("任务类型、模式和实际提示词必须一致")
 	}
@@ -409,6 +454,9 @@ func (s *Service) prepareCreationTask(userID string, req CreateTaskRequest) (*mo
 	var input map[string]any
 	_ = json.Unmarshal([]byte(task.InputJSON), &input)
 	resolved, _ := input["config"].(map[string]any)
+	if localTool || workflowTool {
+		return task, creationToolSignature(task), nil
+	}
 	for _, key := range []string{"size", "videoSeconds", "vquality", "quality", "count"} {
 		if requested := stringValue(config[key]); requested != "" && !strings.EqualFold(requested, stringValue(resolved[key])) {
 			return nil, "", creationConflict("模型解析后的生成规格与请求不同，请调整方案后重新确认")
@@ -439,6 +487,26 @@ func (s *Service) prepareCreationTask(userID string, req CreateTaskRequest) (*mo
 	}
 	sig, err := s.repo.CreationConfigSignature(task, stringValue(resolved["channelId"]), stringValue(resolved["model"]))
 	return task, sig, err
+}
+
+// Tool requests are immutable approved snapshots. Credentials are encrypted in
+// submissions; only an opaque hash enters the execution descriptor.
+func creationToolSignature(task *model.Task) string {
+	var input map[string]any
+	_ = json.Unmarshal([]byte(task.InputJSON), &input)
+	return creationHash([]any{task.Provider, task.Model, task.Type, task.Operation, task.Prompt, input})
+}
+
+func creationLocalComfySpecifications(modelID string) map[string]any {
+	switch strings.TrimPrefix(modelID, localComfyModelPrefix) {
+	case "qwen_image_2_1":
+		return map[string]any{"size": "1024x1024"}
+	case "qwen_image_2_1_preview512":
+		return map[string]any{"size": "512x512"}
+	case "h3_i2v_turbo4":
+		return map[string]any{"size": "864x480", "videoSeconds": "5.166666666666667", "vquality": "480p"}
+	}
+	return map[string]any{}
 }
 func creationExecutionFor(task *model.Task, signature string) CreationExecution {
 	execution := CreationExecution{Model: task.Model}
@@ -499,6 +567,9 @@ func validateCreationSubmissionScope(run *model.CreationRun, version int64, req 
 			return creationConflict("模型与已批准方案不同")
 		}
 		config, _ := req.Input["config"].(map[string]any)
+		if strings.HasPrefix(req.Model, localComfyModelPrefix) {
+			config = creationLocalComfySpecifications(req.Model)
+		}
 		for _, key := range []string{"size", "videoSeconds", "vquality", "quality"} {
 			metadataKey := key
 			if key == "videoSeconds" {
@@ -609,8 +680,12 @@ func (s *Service) buildCreationSubmission(userID string, run *model.CreationRun,
 	}
 	execution := creationExecutionFor(task, signature)
 	executionJSON, _ := json.Marshal(execution)
+	requestHash := creationHash(normalized)
+	if err = s.protectTaskSecrets(normalized.Input); err != nil {
+		return model.CreationSubmission{}, normalized, err
+	}
 	requestJSON, _ := json.Marshal(normalized)
-	item := model.CreationSubmission{ID: newID(), UserID: userID, RunID: run.ID, ItemKey: itemKey, ProposalVersion: proposalVersion, ProposalHash: run.ApprovedProposalHash, RequestJSON: string(requestJSON), RequestHash: creationHash(normalized), ExecutionJSON: string(executionJSON), ConfigSignature: signature}
+	item := model.CreationSubmission{ID: newID(), UserID: userID, RunID: run.ID, ItemKey: itemKey, ProposalVersion: proposalVersion, ProposalHash: run.ApprovedProposalHash, RequestJSON: string(requestJSON), RequestHash: requestHash, ExecutionJSON: string(executionJSON), ConfigSignature: signature}
 	return item, normalized, nil
 }
 
@@ -692,6 +767,14 @@ func (s *Service) ApproveCreationSubmissions(userID, id string, req CreationRequ
 	return map[string]any{"submissions": out}, creationError(err)
 }
 func checkCreationConfigSignature(repo *repository.Repository, task *model.Task, want string) error {
+	var toolInput map[string]any
+	_ = json.Unmarshal([]byte(task.InputJSON), &toolInput)
+	if task.Provider == "local-comfy" || taskInputUsesWorkflowProvider(toolInput) {
+		if creationToolSignature(task) != want {
+			return creationConflict("工具执行配置已变化，请重新确认")
+		}
+		return nil
+	}
 	var input map[string]any
 	_ = json.Unmarshal([]byte(task.InputJSON), &input)
 	config, _ := input["config"].(map[string]any)
@@ -737,6 +820,7 @@ func (s *Service) ExecuteCreationSubmission(userID, id string, req CreationReque
 	if creationExecutionFor(task, signature).ConfigHash != creationSubmissionOutput(*item).Execution.ConfigHash {
 		return nil, creationConflict("执行配置已变化，请重新确认")
 	}
+	preparedTask := *task
 	var input map[string]any
 	_ = json.Unmarshal([]byte(task.InputJSON), &input)
 	if err = s.protectTaskSecrets(input); err != nil {
@@ -776,7 +860,7 @@ func (s *Service) ExecuteCreationSubmission(userID, id string, req CreationReque
 		if fresh.ProposalVersion > 0 && fresh.ProposalHash != current.ApprovedProposalHash {
 			return repository.ErrCreationConflict
 		}
-		if e = checkCreationConfigSignature(repo, task, signature); e != nil {
+		if e = checkCreationConfigSignature(repo, &preparedTask, signature); e != nil {
 			return e
 		}
 		if e = createTaskWithStorageQuotaRepository(repo, task, policy); e != nil {

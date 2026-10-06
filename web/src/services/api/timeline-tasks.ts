@@ -35,6 +35,8 @@ export async function createTimelineTranscriptionTask(
 // 任务完成后由任务中心读取 ResultJSON，并按 TimelineRenderResult 解包。
 
 export type TimelineRenderCreateRequest = {
+	burnSubtitles?: boolean;
+	clientKey?: string;
     projectId: string;
     timeline: TimelineProject;
 };

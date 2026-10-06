@@ -1,0 +1,285 @@
+{
+  "schemaVersion": 1,
+  "fixtureRevision": "r002",
+  "fixtureKind": "local bounded demonstrations; private speech/media excluded from repository",
+  "clips": [
+    {
+      "name": "object-relay",
+      "version": "1.0.1",
+      "sha256": "1786d21630ae9887f7889966871035bf8860bfb46ee37af7714d142c5c9eb520",
+      "frames": 120,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-base"
+    },
+    {
+      "name": "camera-push",
+      "version": "1.0.1",
+      "sha256": "46c3bc8a9676d34ce9a16a6add8c23bb538ef49be0f222f7a2e2f9a33c565a62",
+      "frames": 120,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-base"
+    },
+    {
+      "name": "kinetic-type",
+      "version": "1.0.1",
+      "sha256": "af0f09b2a34a0a0f4f345d3c97e4cfbf447672869cbd399a0075d8ea0303447e",
+      "frames": 120,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-base"
+    },
+    {
+      "name": "diagram-morph",
+      "version": "1.0.1",
+      "sha256": "b9bd40800dc6907a990ee48362a503a211c47ead729f35b25e13664e03cf9c46",
+      "frames": 120,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-base"
+    },
+    {
+      "name": "impact-reveal",
+      "version": "1.0.1",
+      "sha256": "2139bb5d6c5725246e25a0ce79139bf00847b5996c6a66d8088bf76180ffb524",
+      "frames": 120,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-base"
+    },
+    {
+      "name": "continuous-shape-transition",
+      "version": "1.0.1",
+      "sha256": "f6cb40127f7a7a4b8aa72193b6a51be66bfdc4bb7762d126a5d5173a002cf50f",
+      "frames": 120,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-base"
+    },
+    {
+      "name": "mopd",
+      "version": "1.0.1",
+      "sha256": "7f46d21fde8697412e285bacb8653b5d7a19ef0fda8e5b98ddd52ba66f23d87e",
+      "frames": 648,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-base"
+    },
+    {
+      "name": "continuity",
+      "version": "1.0.1",
+      "sha256": "17eec07f192805b13d770be2a7f5d63df17e12d7661c6f8903fe5e050763ff8c",
+      "frames": 360,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-base"
+    },
+    {
+      "name": "continuous-shape-seam",
+      "version": "1.0.1",
+      "sha256": "71a71ebb8920bf9c7ddc88bb28ffab436b9b4a732a20d995504055497c28e3f8",
+      "frames": 240,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-seam"
+    },
+    {
+      "name": "ui-handoff",
+      "version": "1.0.0",
+      "sha256": "536f1551fa6c3c4bd61482bb9d9d4ceab48620eae665c2d6ef712cb90d3e33a9",
+      "frames": 210,
+      "fps": "30/1",
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "sampleRate": 48000,
+      "audioChannels": 2,
+      "actualEncoder": "h264_nvenc",
+      "fullAVDecodePassed": true,
+      "actualCodeGroup": "r002-seam"
+    }
+  ],
+  "actualRenderCodeGroups": {
+    "r002-base": [
+      {
+        "path": "tools/motion_director/remotion-entry.tsx",
+        "sha256": "090cd80b024b0b163465da7bebfda9bb6e8f879919bdf6dd194180a53c83f6e0"
+      },
+      {
+        "path": "tools/motion_director/continuity-view.tsx",
+        "sha256": "667235d29176034624edd159463d980d83bb8f58797112908d8c0f4328c4a19e"
+      },
+      {
+        "path": "tools/motion_director/render.mjs",
+        "sha256": "8a52d98590637c30903219bf674878a58a16f1b97d4c3947b9cfab7db409c0db"
+      },
+      {
+        "path": "web/src/lib/canvas/director/director-motion.ts",
+        "sha256": "909f4f2034cbbb439d510d82186c6f35612beb20833674b4f501d3d9229a29a8"
+      },
+      {
+        "path": "web/src/lib/canvas/director/director-timeline.ts",
+        "sha256": "1d41668d711af67e681e063d9f4ede907bf34696b0932815736742f143e56119"
+      }
+    ],
+    "r002-seam": [
+      {
+        "path": "tools/motion_director/remotion-entry.tsx",
+        "sha256": "090cd80b024b0b163465da7bebfda9bb6e8f879919bdf6dd194180a53c83f6e0"
+      },
+      {
+        "path": "tools/motion_director/continuity-view.tsx",
+        "sha256": "667235d29176034624edd159463d980d83bb8f58797112908d8c0f4328c4a19e"
+      },
+      {
+        "path": "tools/motion_director/render.mjs",
+        "sha256": "8a52d98590637c30903219bf674878a58a16f1b97d4c3947b9cfab7db409c0db"
+      },
+      {
+        "path": "web/src/lib/canvas/director/director-motion.ts",
+        "sha256": "7ca70e4d1e7ab6f11c1766f3175bce300dc9cb3b88824f5d909c00388caefd2a"
+      },
+      {
+        "path": "web/src/lib/canvas/director/director-timeline.ts",
+        "sha256": "a89fb6ccbfd7657eae6b5d7ce5c1c3bfa2a043a347126740bbe75d3534b204ec"
+      }
+    ]
+  },
+  "finalCoreFingerprints": [
+    {
+      "path": "web/src/types/director-motion.ts",
+      "sha256": "7cbb9ee73db4038b6936cccf9e55905658a30ab69593897e5c5965726b44480f"
+    },
+    {
+      "path": "web/src/lib/canvas/director/director-motion.ts",
+      "sha256": "7ca70e4d1e7ab6f11c1766f3175bce300dc9cb3b88824f5d909c00388caefd2a"
+    },
+    {
+      "path": "web/src/lib/canvas/director/director-timeline.ts",
+      "sha256": "a89fb6ccbfd7657eae6b5d7ce5c1c3bfa2a043a347126740bbe75d3534b204ec"
+    },
+    {
+      "path": "web/src/lib/canvas/director/director-frame-critic.ts",
+      "sha256": "e801d39d072a80fbe9d45c12991b8ca6efcd357e92f5fcc8ac1f257cf3a6e1aa"
+    }
+  ],
+  "compatibility": "All eight base explicit-cue timelines recompiled identically after optional primary-impact anchor support was added; original render-time hashes retained. The additional two-shot seam clip and actual UI handoff consumed the final core directly.",
+  "frameQA": {
+    "actualEncodedFrames": 2178,
+    "actualSampledFrames": 70,
+    "fullAVDecodePassed": true,
+    "wholeBlackFrames": 0,
+    "threeShotPropSeamPixelDelta": [
+      0,
+      0
+    ],
+    "sharedShapeSeamFrames": [
+      119,
+      120,
+      121
+    ],
+    "sharedShapeSeamPositionScaleRotationLabelEqual": true
+  },
+  "critic": {
+    "geometricFrames": 2178,
+    "issues": 0,
+    "readingGateFrames": 30,
+    "actualParameterRepair": "settleFrames12 to8 for short shots"
+  },
+  "uiHandoff": {
+    "directDOMPayloadSaved": true,
+    "browserDownloadEventSucceeded": false,
+    "rendererInputByteIdenticalToDirectDOMPayload": true,
+    "inputSHA256": "0ebc2bcb8964171d13a134b75aa896b7973c3315e6b1360d2c40f2d1dc7d0cba",
+    "sceneSha256": "264e6be3d1a7ebbf5c8b96c0fb0c088c325be457a63aa60d71a79f00d9dc1758",
+    "timelineSha256": "336a75d01b895b34a81d023a4eeb69a05d17f79941e1029a380752acce4bf813",
+    "primaryImpactFrame": 113,
+    "actualCuePCMOnsetSample": 180800,
+    "actualEncodedCuePeakSample": 180801,
+    "actualEncodedCuePeakOffsetFrames": 0.000625
+  },
+  "review": {
+    "modelSampledFrameReview": true,
+    "continuousDynamicPlaybackReviewed": false,
+    "humanListening": false,
+    "realCharacterIdentityVerified": false
+  },
+  "rendering": {
+    "remotionVersion": "4.0.518",
+    "gpuEncoder": "h264_nvenc",
+    "concurrency": 2,
+    "layoutBackend": "Chromium SwiftShader"
+  },
+  "finalMopdEncodedAudio": {
+    "integratedLUFS": -20.87,
+    "truePeakDbTP": -3.83,
+    "oldVsNewLUFSDifference": 0.01,
+    "decodedSamplesAtOrAboveFullScale": 0,
+    "music": "none; sparse cues with measured voice ducking"
+  }
+}

@@ -65,15 +65,11 @@ export async function exportTimelineToMp4(timeline: TimelineProject, sources: Ti
             onProgress?.({ phase: "encoding", percent: Math.round(10 + (stepIndex / Math.max(1, executableSteps.length)) * 75), detail: step.description });
 
             if (step.kind === "burn") {
-                const concatOutput = step.args[step.args.indexOf("-i") + 1];
                 try {
                     const exitCode = await ffmpeg.exec(["-y", ...step.args]);
                     if (exitCode !== 0) throw new Error("burn exit " + exitCode);
                 } catch {
-                    // 当前 @ffmpeg/core 可能不含 libass（subtitles 滤镜），回退为直接封装已拼接视频。
-                    onProgress?.({ phase: "encoding", percent: 92, detail: "字幕烧录不可用，回退为无字幕导出" });
-                    const exitCode = await ffmpeg.exec(["-y", "-i", concatOutput, "-c", "copy", plan.finalOutput]);
-                    if (exitCode !== 0) throw new Error("导出失败：字幕烧录与回退均失败");
+                    throw new Error("字幕烧录失败。请检查本地导出能力，或关闭烧录字幕后重新导出；未生成无字幕替代成片。");
                 }
             } else {
                 const exitCode = await ffmpeg.exec(["-y", ...step.args]);

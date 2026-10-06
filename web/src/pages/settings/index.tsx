@@ -13,11 +13,13 @@ import { ModelDefaultGrid } from "./model-default-grid";
 import { LocalComfySettingsPane } from "./local-comfy-settings-pane";
 import { localComfyDefaultsReady, localComfySeedProblem, normalizeLocalComfyDefaults, persistLocalComfyDefaultDraft, type LocalComfyDefaults } from "@/lib/local-comfy-defaults";
 import { listLocalComfyRecipes } from "@/services/api/local-comfy";
+import { RunningHubSettingsPane } from "./runninghub-settings-pane";
 
-type ConfigSectionKey = "channels" | "models";
+type ConfigSectionKey = "channels" | "models" | "runninghub";
 
 const configSections: Array<{ key: ConfigSectionKey; label: string; description: string; icon: ReactNode }> = [
     { key: "channels", label: "个人渠道", description: "模型服务与个人工作流", icon: <RadioTower className="size-4" /> },
+    { key: "runninghub", label: "RunningHub", description: "工作流与 App", icon: <RadioTower className="size-4" /> },
 ];
 
 export function isConfigSection(value: string | null): value is ConfigSectionKey {
@@ -104,7 +106,7 @@ export default function SettingsPage() {
         channels: (
             <SettingsPane>
                 <LocalComfySettingsPane />
-                <ChannelSettingsPane />
+                <ChannelSettingsPane onOpenRunningHub={() => selectSection("runninghub")} />
                 <div className="settings-section mt-4">
                     <div className="settings-pane-header">
                         <div className="min-w-0">
@@ -115,6 +117,7 @@ export default function SettingsPage() {
                 </div>
             </SettingsPane>
         ),
+        runninghub: <SettingsPane><RunningHubSettingsPane /></SettingsPane>,
         models: (
             <SettingsPane>
                 <div className="settings-pane-header">
@@ -132,6 +135,7 @@ export default function SettingsPage() {
 
     return (
         <main className="settings-page app-workspace-page app-user-workspace flex h-full min-h-0 flex-col text-foreground">
+            <div className="settings-topbar flex shrink-0 flex-wrap gap-2 px-4 py-3"><Button type={activeTab === "channels" ? "primary" : "default"} onClick={() => selectSection("channels")}>模型与目录</Button><Button type={activeTab === "runninghub" ? "primary" : "default"} onClick={() => selectSection("runninghub")}>RunningHub 工作流</Button><Button onClick={() => navigate("/production")}>返回自动制作</Button></div>
             {shouldPromptContinue ? (
                 <div className="settings-topbar shrink-0">
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">

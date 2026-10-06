@@ -1,12 +1,13 @@
-import { Boxes, Camera, GalleryHorizontal, Layers3, RectangleHorizontal, UserRound } from "lucide-react";
+import { Boxes, Camera, GalleryHorizontal, Layers3, RectangleHorizontal, UserRound, Clapperboard } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
-export type DirectorWorkbenchTab = "scene" | "actors" | "cameras" | "panorama" | "aspect" | "assets";
+export type DirectorWorkbenchTab = "scene" | "actors" | "cameras" | "panorama" | "aspect" | "assets" | "motion";
 
 const tabs = [
     { id: "scene", label: "场景", icon: Layers3 },
+    { id: "motion", label: "动效导演", icon: Clapperboard },
     { id: "actors", label: "添加角色", icon: UserRound },
     { id: "cameras", label: "添加机位", icon: Camera },
     { id: "panorama", label: "全景图", icon: GalleryHorizontal },

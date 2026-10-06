@@ -1,5 +1,6 @@
 import type { DirectorCamera, DirectorObject, DirectorScene, DirectorShot } from "@/types/director";
 import { directorColorLabel, directorPoseLabel } from "@/lib/canvas/director/director-scene";
+import { compileDirectionPrompt } from "./director-timeline";
 
 const shotSizeLabels: Record<DirectorShot["shotSize"], string> = {
     extreme_wide: "大远景",
@@ -29,6 +30,7 @@ export function compileDirectorPrompt(scene: DirectorScene, shot: DirectorShot) 
     const actors = visibleObjects.filter((item) => item.kind === "actor" || item.primitive === "character");
     return [
         shot.prompt.trim(),
+        shot.direction ? compileDirectionPrompt(shot.direction) : "",
         `镜头设计：${shotSizeLabels[shot.shotSize]}，${cameraMoveLabels[shot.cameraMove]}，时长 ${formatNumber(shot.duration)} 秒。`,
         camera ? cameraPrompt(camera) : "",
         actors.length ? `角色颜色映射：${actors.map((actor) => `${directorColorLabel(actor.color)}人偶（${actor.color}）代表${actor.name}`).join("；")}。生成视频时严格按颜色识别角色，不交换人物身份。` : "",

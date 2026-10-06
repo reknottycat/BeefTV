@@ -5,6 +5,7 @@ import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
 import { ASSET_CATEGORY_LABELS, normalizeAssetCategory } from "@/lib/asset-category";
 import type { ExternalAssetPickerReference } from "@/lib/plugins/plugin-types";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { getWorkspaceAsset } from "@/services/api/workspace-data";
 
 type InsertableAsset = Extract<Asset, { kind: "text" | "image" | "video" | "audio" }>;
 
@@ -30,6 +31,7 @@ export type InsertAssetPayload =
       };
 
 type Props = {
+    backendLibrary?: boolean;
     open: boolean;
     multiple?: boolean;
     onInsert: (payloads: InsertAssetPayload[]) => Promise<void> | void;
@@ -38,7 +40,7 @@ type Props = {
 
 const categoryLabels: Record<string, string> = { all: "全部素材", ...ASSET_CATEGORY_LABELS, archived: "回收站" };
 
-export function AssetPickerModal({ open, multiple = true, onInsert, onClose }: Props) {
+export function AssetPickerModal({ open, multiple = true, backendLibrary = false, onInsert, onClose }: Props) {
     const assets = useAssetStore((state) => state.assets);
     const externalAssetSources = useExternalAssetSources(open);
     const insertableAssets = useMemo(() => assets.filter((asset): asset is InsertableAsset => asset.kind === "text" || asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"), [assets]);
@@ -62,6 +64,7 @@ export function AssetPickerModal({ open, multiple = true, onInsert, onClose }: P
     return (
         <AssetLibraryPickerModal
             remoteLibrary
+            backendLibrary={backendLibrary}
             open={open}
             mediaKinds={["image", "video", "audio", "text"]}
             items={items}
@@ -73,7 +76,13 @@ export function AssetPickerModal({ open, multiple = true, onInsert, onClose }: P
             emptyDescription="先在素材库中添加图片、视频、音频或文本。"
             onClose={onClose}
             onConfirm={async (ids) => {
-                await onInsert(assetPickerItemsToInsertPayloads(ids, items));
+                const available = [...items];
+                if (backendLibrary) {
+                    const missing = ids.filter((id) => !available.some((item) => item.id === id));
+                    const fetched = await Promise.all(missing.map((id) => getWorkspaceAsset(id)));
+                    available.push(...fetched.map(({ asset }) => ({ id: asset.id, title: asset.title, category: normalizeAssetCategory(asset.category), kindLabel: asset.kind, asset })));
+                }
+                await onInsert(assetPickerItemsToInsertPayloads(ids, available));
                 onClose();
             }}
         />

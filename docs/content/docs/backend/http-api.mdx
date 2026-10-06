@@ -15,6 +15,8 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 ## 核心路由组
 
+自动制作的固定时间线渲染接口 `POST /timeline/renders` 使用可选 `clientKey` 恢复原提交，并通过 `burnSubtitles` 选择烧录或独立 SRT；参数、产物检查与失败恢复见 [自动制作](/docs/overview/automatic-production)。运行事实由 `/creation-runs/*` 与统一任务中心保存。
+
 | 路由组 | 用途 |
 | --- | --- |
 | `/workspace/*` | 本地工作区启动和模型配置 |
