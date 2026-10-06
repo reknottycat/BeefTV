@@ -36,6 +36,8 @@ Wails / local dev
 
 ## 硬边界
 
+自动制作复用 `internal/app/creation*.go` 的运行租约、版本与镜头提交合同，前端入口在 `web/src/pages/production`。时间线渲染由 `task_render.go`、`timeline_render_plan.go` 和 `task_timeline.go` 接受固定快照，合成画面与声音并核验实际产物；接口、依赖和恢复规则见 [自动制作](/docs/overview/automatic-production)。
+
 - 不提供登录、注册、计费、支付、公开分享或云存储路由。
 - 内置 BeefAPI 密钥保存在本机加密连接存储中；其他手动渠道密钥仍在本地模型配置中。密钥不进入画布快照或日志响应。
 - 外部 API 是生成能力，不是 SaaS 数据面；不得在“本地化清理”中删除 Provider、Protocol、自定义渠道或插件扩展点。

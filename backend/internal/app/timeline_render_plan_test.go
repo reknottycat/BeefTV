@@ -6,7 +6,7 @@ import (
 )
 
 func renderClipFixture(id string, kind string, trackID string, startMs int64, durationMs int64, storageKey string) renderClip {
-	clip := renderClip{ID: id, Kind: kind, TrackID: trackID, StartMs: startMs, DurationMs: durationMs, Volume: 1}
+	clip := renderClip{ID: id, Kind: kind, TrackID: trackID, StartMs: startMs, DurationMs: durationMs}
 	if storageKey != "" {
 		clip.DirectMedia = &struct {
 			ID         string `json:"id"`

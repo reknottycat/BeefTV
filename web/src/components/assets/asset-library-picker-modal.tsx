@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 import type { ExternalAssetPickerReference } from "@/lib/plugins/plugin-types";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
+import { listWorkspaceAssetsPage } from "@/services/api/workspace-data";
+import { loadFilteredBackendAssetPage } from "@/services/workspace-asset-backend";
 import { deleteWorkspaceAsset, persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
 
 export type AssetPickerMediaKind = "image" | "video" | "audio" | "text";
@@ -50,6 +52,8 @@ export type AssetLibraryPickerFolder = {
 };
 
 type Props = {
+    /** A backend-owned flow must query its authoritative asset store, including web previews. */
+    backendLibrary?: boolean;
     remoteLibrary?: boolean;
     remoteKind?: string;
     /** 左侧「媒体类型」筛选项；只有一种类型或已由 remoteKind 固定时不展示该分组。 */
@@ -88,6 +92,7 @@ type Props = {
 };
 
 export function AssetLibraryPickerModal({
+    backendLibrary = false,
     remoteLibrary = false,
     remoteKind,
     mediaKinds = DEFAULT_MEDIA_KINDS,
@@ -134,7 +139,7 @@ export function AssetLibraryPickerModal({
     // The local desktop workspace may still have a synthetic user id. That id
     // must never turn on the hosted asset-library query; local mode reads the
     // IndexedDB/Go resource store only.
-    const backendAssets = requiresBackendLocalResourceStore();
+    const backendAssets = backendLibrary || requiresBackendLocalResourceStore();
     const remoteEnabled = remoteLibrary && (backendAssets || (!isLocalWorkspaceMode() && Boolean(userId))) && source === "local";
     useEffect(() => {
         const timer = window.setTimeout(() => setRemoteKeyword(keyword.trim()), 250);
@@ -145,13 +150,16 @@ export function AssetLibraryPickerModal({
     const remoteQueryKind = remoteKind || (mediaKind === "all" ? undefined : mediaKind);
     const remoteQuery = useQuery({
         queryKey: ["asset-picker", userId, remotePage, remotePageSize, category, remoteKeyword, remoteQueryKind],
-        queryFn: ({ signal }) => loadAssetLibraryPage({ page: remotePage, pageSize: remotePageSize, kind: remoteQueryKind, category: category === "all" || category === "archived" || category === remoteQueryKind ? undefined : category, status: category === "archived" ? "archived" : "active", query: remoteKeyword, signal }),
+        queryFn: ({ signal }) => {
+            const options = { page: remotePage, pageSize: remotePageSize, kind: remoteQueryKind, category: category === "all" || category === "archived" || category === remoteQueryKind ? undefined : category, status: category === "archived" ? "archived" : "active", query: remoteKeyword, signal };
+            return backendLibrary ? loadFilteredBackendAssetPage(options, listWorkspaceAssetsPage) : loadAssetLibraryPage(options);
+        },
         enabled: remoteEnabled && open && sessionHydrated,
     });
     const remoteItems = useMemo<AssetLibraryPickerItem[]>(() => (remoteQuery.data?.assets || []).filter((asset) => asset.kind !== "entity" && asset.kind !== "model").map((asset) => ({
         id: asset.id, title: asset.title, category: asset.category || "other", archived: asset.status === "archived", asset,
         kindLabel: asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "文本", searchText: (asset.tags ?? []).join(" "),
-        ...(items.find((item) => item.id === asset.id) || { disabledReason: "此素材不适用于当前操作" }),
+        ...(items.find((item) => item.id === asset.id) || (backendLibrary ? {} : { disabledReason: "此素材不适用于当前操作" })),
     })), [remoteQuery.data, items]);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const initialSelectedIdsRef = useRef(initialSelectedIds);

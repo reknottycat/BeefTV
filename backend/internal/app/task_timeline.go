@@ -243,13 +243,16 @@ func (s *Service) CreateTimelineTranscriptionTask(userID string, req TimelineTra
 // Timeline 为前端 TimelineProject 快照（v2：tracks/clips 平铺）。
 // 片段通过 directMedia.storageKey=resource:<id> 引用后端资源。
 type TimelineRenderCreateRequest struct {
-	ProjectID string        `json:"projectId"`
-	Timeline  renderProject `json:"timeline"`
+	BurnSubtitles bool          `json:"burnSubtitles"`
+	ClientKey     string        `json:"clientKey"`
+	ProjectID     string        `json:"projectId"`
+	Timeline      renderProject `json:"timeline"`
 }
 
 type timelineRenderInput struct {
-	ProjectID string        `json:"projectId"`
-	Timeline  renderProject `json:"timeline"`
+	BurnSubtitles bool          `json:"burnSubtitles"`
+	ProjectID     string        `json:"projectId"`
+	Timeline      renderProject `json:"timeline"`
 }
 
 type timelineRenderResult struct {
@@ -267,6 +270,9 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 		return nil, &AppError{Status: 503, Code: 503, Message: "服务正在维护，暂不接受新的生成任务", Retryable: true}
 	}
 	plan := buildRenderPlan(req.Timeline)
+	if plan.Error != "" {
+		return nil, BadAuthRequest(plan.Error)
+	}
 	if !plan.HasMedia {
 		return nil, BadAuthRequest("时间线没有可渲染的媒体片段")
 	}
@@ -274,15 +280,33 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 	if err != nil {
 		return nil, err
 	}
-	input := timelineRenderInput{ProjectID: strings.TrimSpace(req.ProjectID), Timeline: req.Timeline}
+	input := timelineRenderInput{ProjectID: strings.TrimSpace(req.ProjectID), Timeline: req.Timeline, BurnSubtitles: req.BurnSubtitles}
 	inputJSON, _ := json.Marshal(input)
+	taskID := newID()
+	if key := strings.TrimSpace(req.ClientKey); key != "" {
+		if len(key) > 128 {
+			return nil, BadAuthRequest("渲染请求标识过长")
+		}
+		taskID = "render-" + creationHash([]string{userID, key})
+		if existing, err := s.repo.Task(taskID); err == nil {
+			if existing.UserID != userID || existing.InputJSON != string(inputJSON) {
+				return nil, creationConflict("此渲染标识已用于其他时间线，请新建导出版本")
+			}
+			return taskForOutput(*existing), nil
+		}
+	}
 	task := model.Task{
-		ID: newID(), UserID: userID, ProjectID: strings.TrimSpace(req.ProjectID),
+		ID: taskID, UserID: userID, ProjectID: strings.TrimSpace(req.ProjectID),
 		Type: model.TaskTypeTimelineRender, Status: model.TaskStatusQueued,
 		Stage: "等待队列调度", Progress: 5, Prompt: "时间线渲染",
 		Provider: "local", Model: "ffmpeg", InputJSON: string(inputJSON),
 	}
 	if err := s.createTaskWithinStorageQuota(&task, policy); err != nil {
+		if req.ClientKey != "" {
+			if existing, lookupErr := s.repo.Task(taskID); lookupErr == nil && existing.UserID == userID && existing.InputJSON == string(inputJSON) {
+				return taskForOutput(*existing), nil
+			}
+		}
 		if errors.Is(err, repository.ErrActiveTaskLimit) {
 			return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
 		}

@@ -21,6 +21,10 @@ import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_VIDEO_TRACK_ID, normalizeTimelineProjec
 import { formatTimelineTime, getTimelineTrackWidth, getFitTimelineZoom, zoomIn, zoomOut } from "@/lib/timeline/timeline-view";
 import { exportTimelineToMp4 } from "@/lib/timeline/timeline-export";
 import type { TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
+import { exportNativeTimeline } from "@/services/timeline-native-export";
+import { productionTimeline } from "@/lib/creation/production";
+import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { timelineClipVisible } from "@/lib/timeline/timeline-audio";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { SrtEntry, TimelineClip, TimelineDirectMedia, TimelineProject } from "@/types/timeline";
 
@@ -496,7 +500,18 @@ export function CanvasTimelineDialog({
     };
 
     // 组装导出：把当前草稿按片段顺序合成一个 MP4 Blob（导出下载与生成新片段共用）。
+    const nativeExportIntent = useRef<{ hash: string; key: string } | null>(null);
     const runExport = async (): Promise<Blob> => {
+        const snapshot = productionTimeline(normalizeTimelineProject(draft), nodes);
+        const mediaClips = snapshot.clips.filter((clip) => ["video", "audio", "image"].includes(clip.kind) && timelineClipVisible(clip, snapshot.tracks));
+        if (mediaClips.length && mediaClips.every((clip) => resourceIdFromStorageKey(clip.directMedia?.storageKey))) {
+            const hash = JSON.stringify(snapshot);
+            if (nativeExportIntent.current?.hash !== hash) nativeExportIntent.current = { hash, key: crypto.randomUUID() };
+            setExporting(true);
+            try { return await exportNativeTimeline(snapshot, nodes, nativeExportIntent.current.key, (percent, detail) => { setExportPercent(percent); setExportDetail(detail); }); }
+            finally { setExporting(false); setExportPercent(0); setExportDetail(""); }
+        }
+        if (mediaClips.some((clip) => clip.kind !== "video") || draft.tracks.some((track) => track.muted || track.visible === false) || mediaClips.some((clip) => clip.volume !== undefined && clip.volume !== 1 || clip.fadeInMs || clip.fadeOutMs)) throw new Error("此剪辑包含声音、图片或轨道效果，请先将全部素材保存为本地资源后导出");
         const videoClips = draft.clips.filter((clip) => clip.kind === "video");
         if (!videoClips.length) throw new Error("时间线没有视频片段，无法导出");
         const sources: TimelineRenderSource[] = [];
@@ -508,8 +523,8 @@ export function CanvasTimelineDialog({
                 nodeId: clip.nodeId,
                 fileName: "input-" + sources.length + ".mp4",
                 durationMs: clip.sourceDurationMs || clip.durationMs,
-                storageKey: sourceNode?.metadata?.storageKey || media?.storageKey,
-                url: sourceNode?.metadata?.content || media?.url || undefined,
+                storageKey: media?.storageKey || sourceNode?.metadata?.storageKey,
+                url: media?.url || sourceNode?.metadata?.content || undefined,
             });
         }
         if (!sources.length) throw new Error("找不到可导出的视频素材，请确认视频节点包含媒体");
@@ -800,7 +815,10 @@ export function CanvasTimelineDialog({
                     </div>
                 </div>
 
-                <CanvasTimelinePreview clips={draft.clips} nodes={nodes} playheadMs={playheadMs} playing={previewPlaying} theme={theme} onTogglePlay={() => setPreviewPlaying((value) => !value)} onPlayheadChange={setPlayheadMs} />
+                <CanvasTimelinePreview clips={draft.clips} tracks={draft.tracks} nodes={nodes} playheadMs={playheadMs} durationMs={draft.durationMs} playing={open && previewPlaying} theme={theme} onTogglePlay={() => {
+                    if (!previewPlaying && playheadMs >= draft.durationMs) setPlayheadMs(0);
+                    setPreviewPlaying((value) => !value);
+                }} onPlayingChange={setPreviewPlaying} onPlayheadChange={setPlayheadMs} />
 
                 <div className="flex min-h-0 flex-1">
                     <div className="flex w-44 shrink-0 flex-col border-r" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
