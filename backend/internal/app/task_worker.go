@@ -144,6 +144,9 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 			return leaseLostOutcome(session, providerAccepted)
 		}
 		decryptedInput, decryptErr := s.decryptTaskInputJSON(task.InputJSON)
+		if deferred, deferErr := s.deferLocalComfyTask(task, err); deferred {
+			return taskruntime.Outcome{Kind: taskruntime.KindSuspended, Err: deferErr, Applied: deferErr == nil, ProviderAccepted: true}
+		}
 		if s.shouldDeferImageRecovery(*task, err, providerSucceeded) {
 			deferErr := s.deferImageRecovery(*task)
 			return taskruntime.Outcome{Kind: taskruntime.KindSuspended, Err: deferErr, Applied: deferErr == nil, ProviderAccepted: true}

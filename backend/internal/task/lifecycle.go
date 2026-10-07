@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/generation"
@@ -45,7 +46,11 @@ func (s *Service) Retry(userID, id string) (*model.Task, error) {
 	if s.deps.Failures.IsModeration(task.Error) {
 		return nil, kernel.BadAuthRequest(ContentModerationRetryMessage)
 	}
-	if s.deps.Failures.BlocksRetry(task.Error, task.Stage) {
+	// Native Comfy records an explicit protocol outcome. Only these definite
+	// states defer to Catalog.PrepareRetry's authoritative job/binding checks;
+	// unknown, cancelled and merely active attempts keep the general fence.
+	definiteLocalComfy := task.Provider == "local-comfy" && strings.HasPrefix(task.Model, "local-comfy:") && task.Status == model.TaskStatusFailed && task.ProviderCancelStatus == "" && task.Stage != "submission_unknown" && ((task.PollStage == "failed" && task.ProviderRequestID != "") || (task.PollStage == "rejected" && task.ProviderRequestID == ""))
+	if !definiteLocalComfy && s.deps.Failures.BlocksRetry(task.Error, task.Stage) {
 		category := s.deps.Failures.Category(task.Error, task.Stage)
 		if task.Stage == "submission_unknown" || category == generation.CategorySubmissionUncertain {
 			return nil, kernel.BadAuthRequest(SubmissionUncertainRetryMessage)
@@ -145,7 +150,18 @@ func (s *Service) Cancel(ctx context.Context, userID, id string) (*model.Task, e
 	}
 	s.log(task.UserID, task.ID, "warn", "用户主动取消任务", "")
 
-	if task.ProviderRequestID != "" && s.deps.Provider != nil {
+	if strings.HasPrefix(task.Model, "local-comfy:") {
+		// Stopping observation never means stopping GPU work, even when the
+		// submission acknowledgement has not reached the native ledger yet.
+		task.Stage = "已停止本地跟踪"
+		task.Error = "仅停止本地跟踪；GPU作业未确认终止，可查询原作业取回结果"
+		if s.deps.Provider != nil {
+			if err := s.deps.Provider.RequestCancel(ctx, task); err != nil {
+				return nil, err
+			}
+		}
+		task.ProviderCancelStatus = model.ProviderCancelStatusUncertain
+	} else if task.ProviderRequestID != "" && s.deps.Provider != nil {
 		cancelTask := *task
 		run := func() {
 			requestCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

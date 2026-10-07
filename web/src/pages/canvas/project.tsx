@@ -2505,6 +2505,7 @@ function InfiniteCanvasPage() {
                                 onToggleVersions={toggleVersions}
                                 assistantOpen={rightPanel === "assistant"}
                                 onToggleAssistant={toggleAssistant}
+                                onOpenProduction={() => { void saveCanvasProject({ requireRemote: true }).then((saved) => { if (saved) navigate(`/canvas/${projectId}/production`); }); }}
                                 // LibTV 的画布工作区使用“未命名工作区”作为首屏默认标题；
                                 // 项目库仍保留“未命名项目”，因此只在画布顶栏做显示层映射。
                                 title={workspaceProject?.title === "未命名项目" || !workspaceProject?.title ? "未命名工作区" : workspaceProject.title}

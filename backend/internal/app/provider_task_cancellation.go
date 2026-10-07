@@ -58,6 +58,9 @@ func (s *Service) requestProviderCancellation(ctx context.Context, task *model.T
 	if task == nil || task.ID == "" {
 		return errors.New("任务取消状态无效")
 	}
+	if taskInputIsLocalComfy(task.InputJSON) {
+		return s.repo.MarkLocalComfyTrackingStopped(task.UserID, task.ID)
+	}
 	s.hydrateTaskProviderRequestID(task)
 	if task.ProviderRequestID != "" {
 		if err := s.repo.UpdateTaskProviderState(task.ID, task.ProviderRequestID, task.PollStage, task.NextPollAt); err != nil {

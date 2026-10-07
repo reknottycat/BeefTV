@@ -17,6 +17,12 @@ import (
 // mode-specific upstream call. Config, secrets and style stay on typed ports.
 func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	runtime, _ := RuntimeFromContext(ctx)
+	if input.LocalComfy != nil {
+		if runtime.LocalComfy == nil {
+			return nil, errors.New("本地 Comfy 执行端口未配置")
+		}
+		return runtime.LocalComfy.Execute(ctx, input)
+	}
 	userID := strings.TrimSpace(runtime.Call.UserID)
 	if strings.TrimSpace(input.Mode) == "" && strings.HasPrefix(runtime.Call.TaskType, "video_") {
 		input.Mode = "video"

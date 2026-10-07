@@ -20,6 +20,7 @@ type CanvasTopBarProps = {
     onToggleVersions: () => void;
     assistantOpen?: boolean;
     onToggleAssistant?: () => void;
+    onOpenProduction?: () => void;
     title: string;
     titleDraft: string;
     isTitleEditing: boolean;
@@ -67,6 +68,7 @@ export function CanvasTopBar({
     onToggleVersions,
     assistantOpen = false,
     onToggleAssistant,
+    onOpenProduction,
     title,
     titleDraft,
     isTitleEditing,
@@ -348,6 +350,7 @@ export function CanvasTopBar({
                 ) : null}
 
                 <div className="canvas-topbar-cluster canvas-topbar-local-cluster pointer-events-auto hidden items-center gap-1 lg:flex" style={dockStyle}>
+                    {onOpenProduction && !readOnly && <Button type="text" onClick={onOpenProduction} className="canvas-topbar-action" icon={<Clapperboard className="size-4" />}>自动制作</Button>}
                     {onToggleAssistant ? (
                         <CanvasTopBarTooltip label="助手（Ctrl/Cmd + J）">
                             <Button
@@ -367,6 +370,7 @@ export function CanvasTopBar({
                 </div>
 
                 <div className="canvas-topbar-cluster canvas-topbar-tools-cluster pointer-events-auto flex items-center gap-1.5 lg:hidden" style={dockStyle}>
+                    {onOpenProduction && !readOnly && <Button type="text" onClick={onOpenProduction} className="canvas-topbar-action" aria-label="自动制作" icon={<Clapperboard className="size-4" />}>制作</Button>}
                     <CanvasTopBarTooltip label="搜索画布节点">
                         <Button
                             type="text"

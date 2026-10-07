@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"infinite-canvas/backend/internal/localcomfy"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/provider/workflow"
@@ -27,6 +28,7 @@ type VideoBooleanConfig = modelcatalog.VideoBooleanConfig
 
 // Input 是画布生成任务的统一输入合同。
 type Input struct {
+	LocalComfy       *localcomfy.Selection  `json:"localComfy,omitempty"`
 	Mode             string                 `json:"mode"`
 	Prompt           string                 `json:"prompt"`
 	Config           Config                 `json:"config"`

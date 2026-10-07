@@ -18,6 +18,7 @@ import (
 	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/diagnostics"
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/localcomfy"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/operations"
@@ -34,6 +35,7 @@ import (
 )
 
 type Service struct {
+	localComfy               *localcomfy.Client
 	repo                     *repository.Repository
 	dataDir                  string
 	mode                     serviceMode

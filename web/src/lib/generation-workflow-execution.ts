@@ -45,7 +45,7 @@ export function resolveGenerationWorkflowExecution(config: AiConfig, mode: Gener
             capability,
             interfaceType: `runninghub-workflow-${capability}`,
             name,
-            taskModel: workflowTaskModel("RunningHub · ", name),
+            taskModel: `runninghub:${kind}:${encodeURIComponent(kind === "app" ? webappId : workflowId)}`,
             providerModel: workflowId,
             workflowId: kind === "workflow" ? workflowId : "",
             webappId,
@@ -70,10 +70,4 @@ function workflowCapabilityName(value: GenerationWorkflowMode) {
     if (value === "audio") return "音频";
     if (value === "text") return "文本";
     return "图片";
-}
-
-function workflowTaskModel(prefix: string, name: string) {
-    return `${prefix}${Array.from(name)
-        .slice(0, Math.max(0, 120 - prefix.length))
-        .join("")}`;
 }

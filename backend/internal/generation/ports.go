@@ -85,6 +85,10 @@ type WorkflowPort interface {
 	Execute(ctx context.Context, input Input) (map[string]interface{}, error)
 }
 
+type LocalComfyPort interface {
+	Execute(ctx context.Context, input Input) (map[string]any, error)
+}
+
 // PromptPort compiles user prompt templates and checks their structured result.
 // Video tasks never call Compile: the node prompt is the final prompt.
 type PromptPort interface {
@@ -138,15 +142,16 @@ type CallMeta struct {
 }
 
 type Runtime struct {
-	Resources ResourcePort
-	Limits    LimitsPort
-	Receipts  ReceiptPort
-	Images    ImageSubmissionPort
-	Workflow  WorkflowPort
-	Prompt    PromptPort
-	Config    ConfigPort
-	Style     StylePort
-	Probe     MediaProbePort
-	Call      CallMeta
-	Endpoints Endpoints
+	Resources  ResourcePort
+	Limits     LimitsPort
+	Receipts   ReceiptPort
+	Images     ImageSubmissionPort
+	Workflow   WorkflowPort
+	LocalComfy LocalComfyPort
+	Prompt     PromptPort
+	Config     ConfigPort
+	Style      StylePort
+	Probe      MediaProbePort
+	Call       CallMeta
+	Endpoints  Endpoints
 }
