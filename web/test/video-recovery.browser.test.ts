@@ -36,6 +36,7 @@ beforeAll(async () => {
         if (path === "/history") return new Response('<div id="root"></div><script type="module" src="/history.js"></script>', { headers: { "Content-Type": "text/html" } });
         if (path.startsWith("/api/")) {
             requests.push(`${request.method} ${path}`);
+            if (path === "/api/local-comfy/v1/config") return Response.json({ code: 0, data: { configured: false, generation_enabled: false, max_reference_bytes: 0, recipe_count: 0 }, msg: "ok" });
             if (path === "/api/assets/asset-original-video") return Response.json({ code: 0, data: { asset: recoveredAsset } });
             if (path === "/api/canvas-projects/canvas-a") {
                 if (request.method === "PUT") {

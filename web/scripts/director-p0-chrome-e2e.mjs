@@ -110,6 +110,11 @@ async function launchApiFixture() {
             response.end(JSON.stringify({ code: 0, data: { items: [], total: 0 } }));
             return;
         }
+        if (request.method === "GET" && url.pathname === "/api/local-comfy/v1/config") {
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ code: 0, data: { configured: false, generation_enabled: false, max_reference_bytes: 0, recipe_count: 0 }, msg: "ok" }));
+            return;
+        }
         response.writeHead(404, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ code: 404, message: "fixture route not found" }));
     });

@@ -31,6 +31,7 @@ beforeAll(async () => {
         const url = new URL(request.url);
         const path = url.pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
+        if (path === "/api/local-comfy/v1/config") return Response.json({ code: 0, data: { configured: false, generation_enabled: false, max_reference_bytes: 0, recipe_count: 0 }, msg: "ok" });
         if (path === "/api/tasks") {
             reads.push(url.pathname + url.search);
             if (failList) return Response.json({ code: 1, msg: "test unavailable" }, { status: 503 });
