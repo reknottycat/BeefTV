@@ -8,6 +8,7 @@
     "code-map",
     "backend-database",
     "task-runtime-stability",
+    "local-comfy",
     "generation-errors",
     "seedance-task-constraints",
     "video-model-contracts",

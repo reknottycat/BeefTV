@@ -29,6 +29,38 @@ tags:
   - name: creation-conversations
   - name: ai
 paths:
+  /local-comfy/v1/config:
+    get:
+      tags: [ai]
+      summary: 读取部署配置的本地生成设备状态
+      description: |
+        只读元数据，data 含 configured、generation_enabled、recipe_count、max_reference_bytes。
+        未配置时 configured=false；设备连接失败返回 503，不冒充生成开关关闭。
+        不返回私有端点、服务 token、工作流或磁盘路径。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "429":
+          description: 设备状态读取过于频繁
+        "503":
+          description: 本地 adapter 离线、认证失败或不符合部署出口许可
+  /local-comfy/v1/recipes:
+    get:
+      tags: [ai]
+      summary: 读取本地已登记配方的固定执行合同
+      description: |
+        data 是配方数组，字段 id/name/mode/recipe_version/ready/reference_slots/reference_constraints/output。
+        output 含 width/height，video 另需 fps/duration_seconds 与 mime_type=video/mp4。ready 只代表静态校验，不能代表 GPU 已验证。
+        原生 task input.localComfy 包含 recipeId、recipeVersion、seed；服务端冻结当前配方规范。
+        提交时再次核对版本与生成开关。版本变化要求重新准备审批，不重新提交原未知作业。
+        不对浏览器公开 adapter 的 projects/shots/assets/jobs API。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "429":
+          description: 配方读取过于频繁
+        "503":
+          description: 配方暂时不可读取
   /ai/models:
     post:
       tags: [ai]

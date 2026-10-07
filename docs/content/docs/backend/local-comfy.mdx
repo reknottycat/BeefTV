@@ -1,0 +1,82 @@
+---
+title: 本地 Comfy 生成
+---
+
+# 本地 Comfy 生成
+
+Comfy 作为现有作品的图片/视频生成工具使用，结果进入原任务和素材库。无需另建项目或复制剧本。部署者负责配置已验证的工作流、模型和设备；应用不会安装模型或自动开启 GPU 生成。
+
+## 连接关系
+
+浏览器访问 BeefTV 后端；后端访问可信 adapter；adapter 访问固定 ComfyUI。只有访问域名时需要 DNS 解析。使用同机或局域网 IP 不需要公网 DNS，也不依赖公网模型目录。不要把 adapter 或 ComfyUI 暴露为公共 Web 接口。
+
+后端环境变量：
+
+| 配置 | 用途 |
+| --- | --- |
+| `CANVAS_LOCAL_COMFY_ADAPTER_URL` | 完整 API base，例如 `http://127.0.0.1:6007/api/local-comfy/v1`；不配置则关闭本地设备入口 |
+| `CANVAS_LOCAL_COMFY_ADAPTER_TOKEN` | 服务间 token，与 adapter 一致；不会返回浏览器 |
+| `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` | 精确允许 adapter 的私网主机，例如 `127.0.0.1`；不允许全部私网 |
+
+adapter 环境变量：
+
+| 配置 | 用途 |
+| --- | --- |
+| `BEEFTV_COMFY_URL` | Comfy 的固定 HTTP(S) origin，例如同机 `http://127.0.0.1:8188` |
+| `BEEFTV_COMFY_RECIPES` | 私有配方 JSON 文件路径 |
+| `BEEFTV_COMFY_ENABLE_GENERATION` | 仅值 `1` 允许新生成，默认关闭；不影响取回原作业 |
+| `BEEFTV_COMFY_ADAPTER_TOKEN` | 非 loopback 监听必需，至少 32 个非空白 ASCII 字符 |
+| `BEEFTV_COMFY_STATE_DIR` | 必须指定且持久保存；包含任务账本与媒体 |
+| `BEEFTV_COMFY_HOST` / `BEEFTV_COMFY_PORT` | 默认 `127.0.0.1` / `6007`；容器需内部网络与 token |
+
+Python 3.10+，无需第三方包：
+
+```sh
+python tools/comfy_adapter/server.py --state-dir .local/comfy-state
+```
+
+同一状态目录只能由一个 adapter 进程使用。远端设备使用可信私网或受保护连接；HTTP 不提供传输加密。密钥、状态和工作流置于 Git 忽略的私有目录。桌面进程需从其启动环境读取这些配置，设置页面只显示状态，不保存服务凭据。
+
+## 登记工作流
+
+配方清单引用经过验证的 Comfy API JSON，不能使用编辑器 nodes 图。示例只说明字段，不能直接运行：
+
+```json
+{
+  "recipes": [{
+    "id": "my_image",
+    "name": "我的图片配方",
+    "mode": "t2i",
+    "workflow_path": "image-api.private.json",
+    "output": {"width": 1024, "height": 1024},
+    "bindings": {
+      "prompt": {"node": "1", "field": "text"},
+      "seed": {"node": "2", "field": "seed"},
+      "references": [],
+      "output_prefix": {"node": "3", "field": "filename_prefix"}
+    },
+    "output_nodes": ["3"]
+  }]
+}
+```
+
+`mode` 为 t2i/i2i/t2v/i2v。output 是固定配方的实际输出说明，部署者必须核对工作流：图片需 width/height；视频还需 fps 与 duration_seconds。缺少完整说明的配方显示为不支持原生生成，不猜测时长或分辨率。参考图片槽必须与实际输入数一致，不支持视频/音频参考。I2V 可通过 reference_constraints 指定首帧 PNG 尺寸和宽高比。
+
+配方版本绑定工作流、输出与参考限制。审批之后更改配方会要求重新准备和确认；显示名修改不改变版本。登记成功仅代表静态校验通过，需另做设备实测。
+
+当前原生视频取回仅支持可校验的 MP4，视频配方必须显式声明 `output.mime_type: "video/mp4"`；
+WebM 或未声明格式的配方会在生成前标为不支持。取回时核对实际字节、格式、尺寸和时长；
+fps 作为配方审批声明冻结，当前不做实际逐帧帧率验收。图像配方可省略 mime_type。
+
+## 状态与恢复
+
+- 未配置：部署者补全后端连接配置后重启。
+- 设备离线：检查 adapter 进程、精确私网许可和服务间认证，然后重试读取。
+- 无配方：在私有清单登记工作流；修改清单后重启 adapter。
+- 生成关闭：准备好设备后，由部署者显式开启生成。
+- 配方不支持：核对 output、mode 与参考合同，不要通过改 ID 冒充支持。
+- 提交结果未知：查询原任务，不再次提交；已提交的 GPU 作业可能仍在运行。
+- 停止跟踪：停止工作区后续跟踪，不表示设备已停止；仍可取回原任务结果。
+- 归档/保存失败：重试取回原结果，不重复生成。
+
+公开只读元数据为 `/api/local-comfy/v1/config` 和 `/recipes`。生成、取消及恢复沿原生 task API，校验 owner、作品、资源及原作业绑定。内部 adapter 的 projects/shots/assets/jobs 不直接代理给浏览器。

@@ -97,6 +97,10 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		_ = svc.Close()
 		cleanupDB()
 	}
+	if err := svc.ConfigureLocalComfy(cfg.LocalComfyAdapterURL, cfg.LocalComfyAdapterToken); err != nil {
+		cleanupService()
+		return nil, err
+	}
 	if err := initializeService(svc); err != nil {
 		cleanupService()
 		return nil, err
