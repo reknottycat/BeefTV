@@ -107,7 +107,7 @@ func GetProviderExternalBinary(ctx context.Context, config Config, rawURL string
 	if err != nil {
 		return nil, "", err
 	}
-	if err := ValidateChannelConfig(ctx, config); err != nil {
+	if err := validateNormalizedChannelConfig(ctx, config); err != nil {
 		return nil, "", err
 	}
 	downloadURL := ProviderDownloadURL(config.BaseURL, rawURL)
@@ -304,9 +304,6 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		}
 		defer release()
 	}
-	if _, err := outbound.ValidateOutboundURL(req.URL.String()); err != nil {
-		return nil, "", err
-	}
 	outbound.ApplyDefaultOutboundHeaders(req)
 	client := outbound.OutboundHTTPClient(requestTimeout)
 	if providerCredential(req) != "" {
@@ -316,6 +313,8 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		// Arbitrary authentication headers are not stripped by net/http on
 		// cross-origin redirects. Custom connection requests never redirect.
 		client = outbound.CustomRelayHTTPClient(requestTimeout)
+	} else if _, err := outbound.ValidateOutboundURL(req.URL.String()); err != nil {
+		return nil, "", err
 	}
 	observation.Dispatched = true
 	resp, err := client.Do(req)

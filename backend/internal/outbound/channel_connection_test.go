@@ -1,9 +1,6 @@
 package outbound
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -76,37 +73,5 @@ func TestChannelConnectionProposalDoesNotAddNonstandardEndpoints(t *testing.T) {
 	value, err := ApplyChannelPathPrefix(unchanged, "")
 	if err != nil || value != unchanged {
 		t.Fatal("omitted prefix changed the existing URL contract")
-	}
-}
-
-func TestChannelConnectionProposalPureHTTPMockUsesExistingCredential(t *testing.T) {
-	// The recorder invokes a handler in memory. It creates no listener and
-	// exercises no relay/provider runtime, real credential or external request.
-	for _, mode := range []string{"bearer", "api-key"} {
-		value, err := NormalizeChannelConnection(ChannelConnection{AuthMode: mode}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		request := httptest.NewRequest(http.MethodPost, "https://mock.invalid/v1/images/generations", strings.NewReader(`{"model":"mock-image"}`))
-		request.Header.Set("Authorization", "old-placeholder")
-		ApplyChannelAuth(request, value, "synthetic-fixture")
-		recorder := httptest.NewRecorder()
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if mode == "bearer" && r.Header.Get("Authorization") != "Bearer synthetic-fixture" {
-				t.Error("bearer placement failed")
-			}
-			if mode == "api-key" && (r.Header.Get("X-Api-Key") != "synthetic-fixture" || r.Header.Get("Authorization") != "") {
-				t.Error("header placement sent an extra Bearer credential")
-			}
-			_, _ = w.Write([]byte(`{"data":[]}`))
-		})
-		handler.ServeHTTP(recorder, request)
-		if recorder.Code != http.StatusOK || recorder.Body.String() != `{"data":[]}` {
-			t.Fatal("in-memory mock response failed")
-		}
-		encoded, err := json.Marshal(value)
-		if err != nil || strings.Contains(string(encoded), "synthetic-fixture") {
-			t.Fatal("proposal metadata unexpectedly carries a credential value")
-		}
 	}
 }

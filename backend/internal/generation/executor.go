@@ -50,7 +50,7 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateChannelConfig(ctx, config); err != nil {
+	if err := validateNormalizedChannelConfig(ctx, config); err != nil {
 		return nil, err
 	}
 	input.Config = config

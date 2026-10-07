@@ -39,16 +39,12 @@ func NormalizeChannelConfig(config Config) (Config, error) {
 	return config, nil
 }
 
-func ValidateChannelConfig(ctx context.Context, config Config) error {
-	var err error
-	config, err = NormalizeChannelConfig(config)
-	if err != nil {
-		return err
-	}
+// Callers normalize untrusted configuration before checking protocol policy.
+func validateNormalizedChannelConfig(ctx context.Context, config Config) error {
 	if !HasCustomChannelConnection(config) {
 		return nil
 	}
-	if base, err := url.Parse(config.BaseURL); err == nil && IsBeefAPIHost(base.Hostname()) {
+	if base, err := url.Parse(strings.TrimSpace(config.BaseURL)); err == nil && IsBeefAPIHost(base.Hostname()) {
 		return outbound.BadAuthRequest("Connection options cannot override the managed BeefAPI transport")
 	}
 	if strings.TrimSpace(config.APIKey) == "" || len(config.APIKey) > 512 || strings.ContainsAny(config.APIKey, "\r\n") {
@@ -81,10 +77,10 @@ func NewChannelRequest(ctx context.Context, config Config, method, rawURL string
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateChannelConfig(ctx, config); err != nil {
+	if err := validateNormalizedChannelConfig(ctx, config); err != nil {
 		return nil, err
 	}
-	requestURL, err := channelRequestURL(config, method, rawURL)
+	requestURL, err := channelRequestURL(config, rawURL)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +93,7 @@ func NewChannelRequest(ctx context.Context, config Config, method, rawURL string
 	return request, nil
 }
 
-func channelRequestURL(config Config, method, rawURL string) (string, error) {
+func channelRequestURL(config Config, rawURL string) (string, error) {
 	if !HasCustomChannelConnection(config) {
 		return rawURL, nil
 	}
@@ -107,19 +103,7 @@ func channelRequestURL(config Config, method, rawURL string) (string, error) {
 	if _, err := outbound.ApplyChannelPathPrefix(rawURL, "/"); err != nil {
 		return "", err
 	}
-	requestURL, err := outbound.ApplyChannelPathPrefix(rawURL, config.APIPathPrefix)
-	if err != nil {
-		return "", err
-	}
-	// Changing a recoverable image endpoint would bypass the existing owner.
-	original, err := http.NewRequest(method, rawURL, nil)
-	if err != nil {
-		return "", err
-	}
-	if RecoverableImageEndpoint(original) && requestURL != rawURL {
-		return "", outbound.BadAuthRequest("Connection prefixes cannot replace a recoverable image endpoint")
-	}
-	return requestURL, nil
+	return outbound.ApplyChannelPathPrefix(rawURL, config.APIPathPrefix)
 }
 
 func validateProtocolChannelConnection(config Config, spec protocol.RequestSpec) error {

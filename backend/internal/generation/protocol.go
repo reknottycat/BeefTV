@@ -446,7 +446,7 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 	if err != nil {
 		return nil, "", err
 	}
-	if err := ValidateChannelConfig(ctx, config); err != nil {
+	if err := validateNormalizedChannelConfig(ctx, config); err != nil {
 		return nil, "", err
 	}
 	if err := validateProtocolChannelConnection(config, spec); err != nil {
@@ -461,7 +461,7 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 	if err != nil {
 		return nil, "", err
 	}
-	requestURL, err = channelRequestURL(config, method, requestURL)
+	requestURL, err = channelRequestURL(config, requestURL)
 	if err != nil {
 		return nil, "", err
 	}

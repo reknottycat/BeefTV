@@ -237,7 +237,7 @@ func TestChannelConnectionRejectsInvalidOptionsAndUnsupportedWorkflow(t *testing
 	} {
 		config := base
 		update(&config)
-		if err := ValidateChannelConfig(context.Background(), config); err == nil {
+		if _, err := NewChannelRequest(context.Background(), config, http.MethodGet, config.BaseURL+"/v1/models", nil); err == nil {
 			t.Fatalf("invalid config accepted: %+v", config)
 		}
 	}
@@ -261,6 +261,18 @@ func TestChannelConnectionCannotUseGlobalPrivateBypass(t *testing.T) {
 	err := GetJSON(context.Background(), customConnectionConfig(server.URL), "/models", &target)
 	if err == nil || hits.Load() != 0 {
 		t.Fatalf("custom SSRF boundary bypassed: %v hits=%d", err, hits.Load())
+	}
+}
+
+func TestChannelConnectionRejectsWhitespaceManagedOriginBeforeRequest(t *testing.T) {
+	for _, baseURL := range []string{" https://global.beefapi.com", "https://global.beefapi.com ", " \thttps://global.beefapi.com \n"} {
+		config := customConnectionConfig(baseURL)
+		config.InterfaceType = "openai-image"
+		rawURL := APIURL(config.BaseURL, "/images/generations")
+		request, err := NewChannelRequest(context.Background(), config, http.MethodPost, rawURL, nil)
+		if request != nil || err == nil || !strings.Contains(err.Error(), "managed BeefAPI transport") {
+			t.Fatalf("whitespace bypassed managed-origin guard: base=%q request=%v err=%v", baseURL, request, err)
+		}
 	}
 }
 
