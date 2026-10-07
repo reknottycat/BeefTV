@@ -1,27 +1,37 @@
 import type { ProductionState } from "../../src/lib/creation/production";
 import type { CreationRunDetail } from "../../src/services/api/creation-runs";
 import type { GenerationTask } from "../../src/services/api/task-center";
+import type { TimelineRenderCreateRequest } from "../../src/services/api/timeline-tasks";
 
-const ready = new URLSearchParams(location.search).get("mode") === "ready";
+const mediaMode = new URLSearchParams(location.search).get("mode") === "media";
+const mediaFormat = new URLSearchParams(location.search).get("mediaFormat") === "mp4" ? "mp4" : "webm";
+const ready = mediaMode || new URLSearchParams(location.search).get("mode") === "ready";
+const durationMs = mediaMode ? 2000 : 4000;
 const imageUrl = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#223346"/><circle cx="430" cy="160" r="65" fill="#c89f71"/><path d="M0 250L220 100L400 360H0Z" fill="#3d6172"/></svg>')}`;
 const shots: ProductionState["shots"] = ["第一镜", "第二镜"].slice(0, ready ? 1 : 2).map((title, index) => ({
-    nodeId: `shot-${index}`, title, mode: ready ? "image" : "video", prompt: "傍晚，人物推开房门，暖光照进室内。", model: "fixture-model", options: { size: "16:9", videoSeconds: "4" }, referenceNodeIds: [],
-    attempts: ready ? ["old", "new"].map((id) => ({ id, status: "ready", media: { id, kind: "image", title, storageKey: `resource:${id}`, durationMs: 4000 } })) : [], selectedAttemptId: ready ? "old" : undefined,
+    nodeId: `shot-${index}`, title, mode: ready && !mediaMode ? "image" : "video", prompt: "傍晚，人物推开房门，暖光照进室内。", model: "fixture-model", options: { size: "16:9", videoSeconds: "4" }, referenceNodeIds: [],
+    attempts: ready ? ["old", "new"].map((id) => ({ id, status: "ready", media: { id, kind: mediaMode ? "video" : "image", title, storageKey: `resource:${id}`, durationMs } })) : [], selectedAttemptId: ready ? mediaMode ? "new" : "old" : undefined,
 }));
 const state: ProductionState = { kind: "canvas-production", version: 1, proposalVersion: 1, shots, exports: [] };
 if (ready) {
-    state.timeline = { version: 2, durationMs: 4000, tracks: [{ id: "video", kind: "video", label: "画面", order: 0 }], clips: [{ id: "clip", kind: "image", nodeId: "shot-0", title: "第一镜", trackId: "video", startMs: 0, durationMs: 4000, directMedia: shots[0].attempts[0].media }] };
-    state.assembledSelection = JSON.stringify(shots.map((shot) => [shot.nodeId, shot.selectedAttemptId, shot.attempts[0].media?.storageKey]));
+    const selectedMedia = shots[0].attempts.find((attempt) => attempt.id === shots[0].selectedAttemptId)!.media;
+    state.timeline = { version: 2, durationMs, tracks: [{ id: "video", kind: "video", label: "画面", order: 0 }], clips: [{ id: "clip", kind: mediaMode ? "video" : "image", nodeId: "shot-0", title: "第一镜", trackId: "video", startMs: 0, durationMs, directMedia: selectedMedia }] };
+    state.assembledSelection = JSON.stringify(shots.map((shot) => [shot.nodeId, shot.selectedAttemptId, selectedMedia?.storageKey]));
 }
 let detail: CreationRunDetail = { run: { id: "run", userId: "owner", canvasId: "canvas", revision: 1, executionEpoch: 0, executionOwner: "", status: "waiting_execution", state, approvedProposalHash: ready ? "approved" : undefined, createdAt: "", updatedAt: "" }, submissions: [] };
-const document = { id: "canvas", revision: 1, title: "回家的路", nodes: shots.map((shot) => ({ id: shot.nodeId, type: shot.mode, title: shot.title, metadata: { model: shot.model, prompt: shot.prompt } })), connections: [] };
+let document = { id: "canvas", revision: 1, title: "回家的路", nodes: shots.map((shot) => ({ id: shot.nodeId, type: shot.mode, title: shot.title, metadata: { model: shot.model, prompt: shot.prompt, ...(mediaMode ? { storageKey: "resource:old", content: `/media/old.${mediaFormat}`, status: "success" } : {}) } })), connections: [] };
+// Only the real-media test needs a reload boundary; business persistence remains a fixture.
+if (mediaMode && sessionStorage.getItem("production-media-fixture")) ({ detail, document } = JSON.parse(sessionStorage.getItem("production-media-fixture")!));
+const persistMediaFixture = () => { if (mediaMode) sessionStorage.setItem("production-media-fixture", JSON.stringify({ detail, document })); };
 const copy = <T>(value: T): T => structuredClone(value);
-export const receipt = { executed: 0, renderCalls: 0, waiting: false, mutateProposal: () => { (detail.run.state as ProductionState).shots[0].prompt = "其他窗口修改后的新方案"; }, current: () => copy(detail) };
+export const receipt = { executed: 0, renderCalls: 0, waiting: false, mutateProposal: () => { (detail.run.state as ProductionState).shots[0].prompt = "其他窗口修改后的新方案"; }, current: () => copy(detail), canvas: () => copy(document),
+    replaceCanvasVersion: () => { document.nodes[0].metadata.storageKey = "resource:new"; document.nodes[0].metadata.content = `/media/new.${mediaFormat}`; document.revision++; persistMediaFixture(); },
+};
 Object.assign(window, { productionFixture: receipt });
 export const creationRuns = {
     list: async () => ({ runs: [copy(detail.run)] }), get: async () => copy(detail),
     claim: async (_id: string, input: { owner: string }) => { detail.run.executionEpoch++; detail.run.executionOwner = input.owner; return copy(detail.run); },
-    save: async (_id: string, input: { state: ProductionState; status: typeof detail.run.status }) => { detail.run.state = copy(input.state); detail.run.status = input.status; detail.run.revision++; return copy(detail.run); },
+    save: async (_id: string, input: { state: ProductionState; status: typeof detail.run.status }) => { detail.run.state = copy(input.state); detail.run.status = input.status; detail.run.revision++; persistMediaFixture(); return copy(detail.run); },
     release: async () => ({ released: true }), heartbeat: async () => ({ leaseExpiresAt: "" }),
     canvasSnapshot: async () => ({ document: copy(document), snapshotHash: "hash" }),
     approveProposal: async () => { detail.run.approvedProposalHash = "approved"; detail.run.revision++; return copy(detail.run); },
@@ -38,12 +48,20 @@ export const waitForGenerationTask = async (_id: string, options: { signal?: Abo
 export const canRetrieveVideoResult = () => false;
 export const queryFailedVideoProviderTask = async (id: string) => ({ task: await queryGenerationTask(id) });
 export const parseBackendGenerationResult = () => ({});
-export const createTimelineRenderTask = async () => { receipt.renderCalls++; return { ...await queryGenerationTask("render"), status: "succeeded", resultJson: JSON.stringify({ resourceId: "film" }) }; };
+export const createTimelineRenderTask = async (input: TimelineRenderCreateRequest) => {
+    receipt.renderCalls++;
+    if (mediaMode) {
+        const response = await fetch("/fixture/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input, canvas: document }) });
+        if (!response.ok) throw new Error(await response.text());
+        return response.json();
+    }
+    return { ...await queryGenerationTask("render"), status: "succeeded", resultJson: JSON.stringify({ resourceId: "film" }) };
+};
 export const resourceIdFromStorageKey = (key?: string) => key?.startsWith("resource:") ? key.slice(9) : "";
-export const resourceFileUrl = () => imageUrl;
-export const getResource = async () => ({ status: "ready", durationMs: 4000 });
-export const resolveMediaUrl = async () => imageUrl;
-export const cacheResourceObjectUrl = async () => imageUrl;
+export const resourceFileUrl = (id: string) => mediaMode ? `/media/${encodeURIComponent(id)}.${id === "film" ? "mp4" : mediaFormat}` : imageUrl;
+export const getResource = async () => ({ status: "ready", durationMs });
+export const resolveMediaUrl = async (key?: string) => mediaMode ? resourceFileUrl(resourceIdFromStorageKey(key)) : imageUrl;
+export const cacheResourceObjectUrl = resolveMediaUrl;
 export const captureUserScope = () => ({ userScope: "test", epoch: 1 });
 export const assertUserScope = () => undefined;
 export const useActiveTheme = () => new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
