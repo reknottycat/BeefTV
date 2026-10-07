@@ -62,23 +62,19 @@ func PostJSONWithSubmissionKey(ctx context.Context, config Config, path string, 
 }
 
 func GetJSON(ctx context.Context, config Config, path string, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, APIURL(config.BaseURL, path), nil)
+	req, err := NewChannelRequest(ctx, config, http.MethodGet, APIURL(config.BaseURL, path), nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	outbound.ApplyOutboundHeaders(req, config.Headers)
 	return DoJSON(req, target)
 }
 
 func PostForm(ctx context.Context, config Config, path string, contentType string, body io.Reader, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, APIURL(config.BaseURL, path), body)
+	req, err := NewChannelRequest(ctx, config, http.MethodPost, APIURL(config.BaseURL, path), body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	req.Header.Set("Content-Type", contentType)
-	outbound.ApplyOutboundHeaders(req, config.Headers)
 	return DoJSON(req, target)
 }
 
@@ -87,18 +83,14 @@ func PostBinary(ctx context.Context, config Config, path string, body interface{
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	outbound.ApplyOutboundHeaders(req, config.Headers)
 	return DoBinary(req)
 }
 
 func GetBinary(ctx context.Context, config Config, path string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, APIURL(config.BaseURL, path), nil)
+	req, err := NewChannelRequest(ctx, config, http.MethodGet, APIURL(config.BaseURL, path), nil)
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	outbound.ApplyOutboundHeaders(req, config.Headers)
 	return DoBinary(req)
 }
 
@@ -111,6 +103,13 @@ func GetExternalBinary(ctx context.Context, rawURL string) ([]byte, string, erro
 }
 
 func GetProviderExternalBinary(ctx context.Context, config Config, rawURL string) ([]byte, string, error) {
+	config, err := NormalizeChannelConfig(config)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := ValidateChannelConfig(ctx, config); err != nil {
+		return nil, "", err
+	}
 	downloadURL := ProviderDownloadURL(config.BaseURL, rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
@@ -133,6 +132,9 @@ func PostStreamingBinary(ctx context.Context, config Config, path string, body i
 }
 
 func PostGeminiJSON(ctx context.Context, config Config, path string, body interface{}, target interface{}) error {
+	if HasCustomChannelConnection(config) {
+		return outbound.BadAuthRequest("Connection options cannot override Gemini authentication")
+	}
 	req, err := newJSONRequest(ctx, http.MethodPost, GeminiURL(config.BaseURL, path), config, body)
 	if err != nil {
 		return err
@@ -143,6 +145,9 @@ func PostGeminiJSON(ctx context.Context, config Config, path string, body interf
 }
 
 func GetGeminiJSON(ctx context.Context, config Config, path string, target interface{}) error {
+	if HasCustomChannelConnection(config) {
+		return outbound.BadAuthRequest("Connection options cannot override Gemini authentication")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, GeminiURL(config.BaseURL, path), nil)
 	if err != nil {
 		return err
@@ -153,6 +158,9 @@ func GetGeminiJSON(ctx context.Context, config Config, path string, target inter
 }
 
 func GetGeminiBinary(ctx context.Context, config Config, rawURL string) ([]byte, string, error) {
+	if HasCustomChannelConnection(config) {
+		return nil, "", outbound.BadAuthRequest("Connection options cannot override Gemini authentication")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, "", err
@@ -171,15 +179,13 @@ func newJSONRequest(ctx context.Context, method, rawURL string, config Config, b
 		}
 		reader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, rawURL, reader)
+	req, err := NewChannelRequest(ctx, config, method, rawURL, reader)
 	if err != nil {
 		return nil, err
 	}
-	ApplyAuth(req, config)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	outbound.ApplyOutboundHeaders(req, config.Headers)
 	return req, nil
 }
 
@@ -224,7 +230,11 @@ func DoJSON(req *http.Request, target interface{}) error {
 	return nil
 }
 
-func DoBinary(req *http.Request) ([]byte, string, error) {
+func DoBinary(req *http.Request) (data []byte, mimeType string, err error) {
+	defer func() {
+		data = redactProviderResponse(req, data, mimeType, err != nil)
+		err = redactProviderError(req, err)
+	}()
 	if RecoverableImageEndpoint(req) {
 		runtime, ok := RuntimeFromContext(req.Context())
 		if !ok || runtime.Images == nil {
@@ -249,10 +259,12 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 	startedAt := time.Now()
 	observation := TransportObservation{Request: req, StartedAt: startedAt, ResponseLimitBytes: MaxResponseBytes}
 	defer func() {
+		responseData = redactProviderResponse(req, responseData, responseMime, resultErr != nil)
+		resultErr = redactProviderError(req, resultErr)
 		observation.Body = responseData
 		observation.Err = resultErr
 		if runtime, ok := RuntimeFromContext(req.Context()); ok && runtime.Receipts != nil {
-			runtime.Receipts.Observe(observation)
+			runtime.Receipts.Observe(redactProviderObservation(observation, responseMime))
 		}
 	}()
 	requestTimeout := HTTPTimeout
@@ -297,6 +309,14 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 	}
 	outbound.ApplyDefaultOutboundHeaders(req)
 	client := outbound.OutboundHTTPClient(requestTimeout)
+	if providerCredential(req) != "" {
+		if _, err := outbound.ValidateCustomRelayURL(req.URL.String()); err != nil {
+			return nil, "", err
+		}
+		// Arbitrary authentication headers are not stripped by net/http on
+		// cross-origin redirects. Custom connection requests never redirect.
+		client = outbound.CustomRelayHTTPClient(requestTimeout)
+	}
 	observation.Dispatched = true
 	resp, err := client.Do(req)
 	if err != nil {
@@ -309,7 +329,7 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 	observation.HTTPStatus = resp.StatusCode
 	observation.StatusCode = resp.StatusCode
 	observation.DeclaredResponseBytes = resp.ContentLength
-	observation.RequestID = firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id"))
+	observation.RequestID = string(redactProviderRequestBytes(req, []byte(firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id")))))
 	if resp.ContentLength > responseLimit {
 		observation.Outcome = "response_limit"
 		return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
@@ -318,6 +338,10 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 	var buffered bytes.Buffer
 	reader := io.LimitReader(resp.Body, responseLimit+1)
 	chunk := make([]byte, 32<<10)
+	redactor := providerStreamRedactor{secret: []byte(providerCredential(req))}
+	structuredRedactor := providerStructuredStreamRedactor{request: req, mimeType: mimeType}
+	structuredStream := providerCredential(req) != "" && (strings.Contains(strings.ToLower(mimeType), "json") || strings.Contains(strings.ToLower(mimeType), "event-stream"))
+	redactStream := textualProviderResponse(mimeType) || resp.StatusCode < 200 || resp.StatusCode >= 300
 	for {
 		readCount, readErr := reader.Read(chunk)
 		observation.ReceivedBytes += int64(readCount)
@@ -328,18 +352,35 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 			}
 			_, _ = buffered.Write(chunk[:readCount])
 			if onChunk != nil {
-				onChunk(mimeType, chunk[:readCount])
+				if structuredStream {
+					if safe := structuredRedactor.push(chunk[:readCount], false); len(safe) > 0 {
+						onChunk(mimeType, safe)
+					}
+				} else if !redactStream {
+					onChunk(mimeType, chunk[:readCount])
+				} else if safe := redactor.push(chunk[:readCount], false); len(safe) > 0 {
+					onChunk(mimeType, safe)
+				}
 			}
 		}
 		if errors.Is(readErr, io.EOF) {
+			if onChunk != nil && structuredStream {
+				if safe := structuredRedactor.push(nil, true); len(safe) > 0 {
+					onChunk(mimeType, safe)
+				}
+			} else if onChunk != nil && redactStream {
+				if safe := redactor.push(nil, true); len(safe) > 0 {
+					onChunk(mimeType, safe)
+				}
+			}
 			break
 		}
 		if readErr != nil {
 			return nil, "", readErr
 		}
 	}
-	data := buffered.Bytes()
-	if int64(len(data)) > responseLimit {
+	data := redactProviderResponse(req, buffered.Bytes(), mimeType, resp.StatusCode < 200 || resp.StatusCode >= 300)
+	if int64(buffered.Len()) > responseLimit {
 		return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -347,9 +388,9 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
 		httpErr := HTTPError{
-			RequestID:           firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id")),
+			RequestID:           observation.RequestID,
 			StatusCode:          resp.StatusCode,
-			Status:              resp.Status,
+			Status:              string(redactProviderRequestBytes(req, []byte(resp.Status))),
 			Body:                string(data),
 			RetryAfter:          ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 			IdempotencyReplayed: strings.EqualFold(resp.Header.Get("Idempotency-Replayed"), "true"),

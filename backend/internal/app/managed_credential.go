@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/beefapi"
+	"infinite-canvas/backend/internal/generation"
 )
 
 const managedBeefAPIRef = beefapi.CredentialRef
@@ -37,6 +38,12 @@ func (s *Service) resolveManagedBeefAPISecrets(input map[string]any) (map[string
 	baseURL := strings.TrimSpace(stringValue(config["baseUrl"]))
 	if !beefapi.IsManagedChannel(channelID, credentialRef, baseURL) && !s.hasLegacyBeefAPIKey(channelID, baseURL) {
 		return input, nil
+	}
+	if generation.HasCustomChannelConnection(providerConfig{
+		AuthMode: stringValue(config["authMode"]), AuthHeader: stringValue(config["authHeader"]),
+		APIPathPrefix: stringValue(config["apiPathPrefix"]),
+	}) {
+		return nil, BadAuthRequest("托管渠道不接受自定义认证或路径前缀")
 	}
 	apiKey, resolvedBase, accountID, tokenID, err := s.lookupBeefAPICredential()
 	if err != nil {

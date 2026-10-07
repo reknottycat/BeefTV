@@ -425,11 +425,10 @@ func normalizedMediaMimeType(declared string, data []byte) string {
 }
 
 func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, error) {
-	headers, err := NormalizeOutboundHeaders(config.Headers)
+	config, err := generation.NormalizeChannelConfig(config)
 	if err != nil {
-		return providerConfig{}, err
+		return providerConfig{}, mapOutboundError(err)
 	}
-	config.Headers = headers
 	if s.IsLocalMode() && strings.TrimSpace(config.ChannelID) != "" {
 		// A stale hosted model selection must not reopen the system-channel
 		// catalog in a local workspace. Local users configure the provider
@@ -448,6 +447,9 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 			return providerConfig{}, err
 		}
 		return config, nil
+	}
+	if generation.HasCustomChannelConnection(config) {
+		return providerConfig{}, BadAuthRequest("系统渠道不接受自定义认证或路径前缀")
 	}
 	channel, err := s.SystemChannel(channelID)
 	if err != nil {

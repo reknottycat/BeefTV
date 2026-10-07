@@ -46,6 +46,14 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	} else if strings.TrimSpace(input.Config.ChannelID) != "" {
 		return nil, errors.New("无法解析系统渠道配置")
 	}
+	config, err := NormalizeChannelConfig(input.Config)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateChannelConfig(ctx, config); err != nil {
+		return nil, err
+	}
+	input.Config = config
 	applyCanvasTextStreaming(runtime.Call.TaskType, &input)
 
 	if workflow.IsProviderInterface(input.Config.InterfaceType) {

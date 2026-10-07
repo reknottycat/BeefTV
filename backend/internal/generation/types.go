@@ -82,6 +82,9 @@ type Config struct {
 	InterfaceType            string                    `json:"interfaceType"`
 	BaseURL                  string                    `json:"baseUrl"`
 	APIKey                   string                    `json:"apiKey"`
+	AuthMode                 string                    `json:"authMode,omitempty"`
+	AuthHeader               string                    `json:"authHeader,omitempty"`
+	APIPathPrefix            string                    `json:"apiPathPrefix,omitempty"`
 	SecretKey                string                    `json:"secretKey"`
 	Headers                  []outbound.OutboundHeader `json:"headers"`
 	Model                    string                    `json:"model"`

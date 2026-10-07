@@ -1,9 +1,18 @@
 package generation
 
-import "net/http"
+import (
+	"net/http"
+
+	"infinite-canvas/backend/internal/outbound"
+)
 
 func ApplyAuth(req *http.Request, config Config) {
 	if req == nil {
+		return
+	}
+	if HasCustomChannelConnection(config) {
+		outbound.ApplyChannelAuth(req, channelConnection(config), config.APIKey)
+		rememberProviderCredential(req, config.APIKey)
 		return
 	}
 	if config.APIFormat == "claude" {

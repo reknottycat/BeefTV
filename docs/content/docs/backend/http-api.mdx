@@ -50,6 +50,20 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 这些任务在本机完成，提交时不用挑选模型。请求可以带 `clientOperationId`：同一确认重复提交会回到原来的任务；同一确认换成不同内容会被拒绝，不会再新建一条。
 
+### 自定义模型渠道连接
+
+`POST /ai/models` 的请求体和生成任务的 `input.config` 接受以下后端连接字段。模型目录还接受 `interfaceType`，用于核对连接选项是否适用于指定协议。
+
+| 字段 | 行为 |
+| --- | --- |
+| `authMode` | 省略时为 `bearer`；只支持 `bearer` 和 `api-key`，两者都使用现有 `apiKey`，不支持无密钥请求 |
+| `authHeader` | 仅 `api-key` 模式可设置，默认 `X-Api-Key`；不能使用系统管理的头，也不能与 `headers` 中的同名头重复 |
+| `apiPathPrefix` | 省略时沿用协议默认路径；设置为 `/gateway` 会把标准接口的完整路径前缀替换为 `/gateway`，例如 `/old/v1/models` 变为 `/gateway/models`；`/` 表示根路径 |
+
+自定义认证与路径前缀仅适用于受支持的标准 OpenAI 协议，端点范围为模型目录、Chat Completions、Responses、图像及视频（`/models`、`/chat/completions`、`/responses`、`/images/generations`、`/images/edits`、`/video/generations`、`/videos` 及受支持的视频查询与下载路径）。音频端点（包括 `/audio/speech`、`/audio/tasks`）和供应商专有协议不支持这些自定义选项；未设置选项的调用沿用原有行为。它们不能改变上游主机、覆盖协议专有认证或非标准路径，也不能覆盖系统渠道或内置 BeefAPI 托管凭证。Gemini 未设置这些选项时继续使用原有认证和模型目录路径。无效认证头、路径跳转及不支持的协议组合在请求发出前拒绝。
+
+模型目录仍返回 `data.models`，保留上游模型元数据和视频能力校验。私网访问规则不变：默认拒绝本机、私网及链路本地地址；受信主机须由 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 精确放行。上述合同仅描述后端连接参数，不包含前端设置界面或 ComfyUI 服务的启动、停止和工作流执行。
+
 ## 统一操作层与内置创作助手
 
 `DELETE /assets/:id` 校验素材归属及业务引用。清空回收站时传 `expectedStatus=archived`，在删除事务内再次检查状态；期间已经还原的素材返回 409 并保留。该参数只接受 `archived`，其他值返回 400。省略参数保留普通删除语义，仍须通过引用检查。
