@@ -35,6 +35,7 @@ func (q *testQuota) ValidateCanvas(string, *repository.Repository, bool, int64) 
 type testSecrets struct{}
 
 func (testSecrets) Protect(map[string]any) error { return nil }
+func (testSecrets) Restore(map[string]any) error { return nil }
 
 type testMedia struct{}
 
@@ -64,6 +65,8 @@ func (m *recordingMedia) ValidateDocument(_ string, repo *repository.Repository,
 }
 
 type failingSecrets struct{}
+
+func (failingSecrets) Restore(map[string]any) error { return nil }
 
 func (failingSecrets) Protect(input map[string]any) error {
 	input["bad"] = make(chan int)

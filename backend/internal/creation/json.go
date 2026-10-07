@@ -55,7 +55,7 @@ func visitJSONSecrets(v any) bool {
 	case map[string]any:
 		for key, child := range item {
 			switch strings.ToLower(key) {
-			case "apikey", "secretkey", "authorization", "cookie", "headers", "baseurl", "token", "accesstoken", "refresh_token":
+			case "apikey", "secretkey", "runninghubwalletapikey", "runninghubuploadapikey", "authorization", "cookie", "headers", "baseurl", "token", "accesstoken", "refresh_token":
 				if child != nil && child != "" {
 					return false
 				}

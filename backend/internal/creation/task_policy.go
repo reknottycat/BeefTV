@@ -18,23 +18,31 @@ var allowedConfigKeys = []string{
 
 func (s *Service) constrainTask(userID string, repo *repository.Repository, req *TaskRequest) error {
 	config, _ := req.Input["config"].(map[string]any)
-	if req.LogicalModelID == "" && strings.TrimSpace(stringValue(config["channelId"])) == "" {
+	tool, err := validateToolRequest(req)
+	if err != nil {
+		return err
+	}
+	if !tool && req.LogicalModelID == "" && strings.TrimSpace(stringValue(config["channelId"])) == "" {
 		return kernel.BadAuthRequest("智能创作目前仅支持后端受管模型，请在原入口使用其他渠道")
 	}
-	if s.deps.Kinds != nil && (s.deps.Kinds.UsesWorkflow(req.Input) || s.deps.Kinds.UsesTextReplay(req.Input)) {
-		return kernel.BadAuthRequest("智能创作不支持本机、工作流或文本回放任务")
+	if s.deps.Kinds != nil && (s.deps.Kinds.UsesTextReplay(req.Input) || (!tool && s.deps.Kinds.UsesWorkflow(req.Input))) {
+		return kernel.BadAuthRequest("智能创作不支持此工作流或文本回放任务")
 	}
 	safeConfig := map[string]any{}
-	for _, key := range allowedConfigKeys {
-		if value, ok := config[key]; ok {
-			safeConfig[key] = value
+	if tool {
+		safeConfig = config
+	} else {
+		for _, key := range allowedConfigKeys {
+			if value, ok := config[key]; ok {
+				safeConfig[key] = value
+			}
 		}
 	}
 	if req.Input == nil {
 		req.Input = map[string]any{}
 	}
 	req.Input["config"] = safeConfig
-	if err := ValidateJSON(req); err != nil {
+	if err := validateTaskRecord(*req, tool); err != nil {
 		return err
 	}
 	if req.Type != "canvas_text" && req.Type != "text" && req.Type != "canvas_image" && req.Type != "canvas_video" {
@@ -156,15 +164,15 @@ func executionFor(task *model.Task, signature string) Execution {
 			execution.Options[key] = value
 		}
 	}
+	for key, value := range recipeOptions(input) {
+		execution.Options[key] = value
+	}
 	execution.ConfigHash = Hash([]any{signature, execution.Options})
 	return execution
 }
 
 func checkConfigSignature(repo *repository.Repository, task *model.Task, want string) error {
-	var input map[string]any
-	_ = json.Unmarshal([]byte(task.InputJSON), &input)
-	config, _ := input["config"].(map[string]any)
-	got, err := repo.CreationConfigSignature(task, stringValue(config["channelId"]), stringValue(config["model"]))
+	got, err := configSignature(repo, task)
 	if err != nil {
 		return err
 	}
@@ -172,4 +180,16 @@ func checkConfigSignature(repo *repository.Repository, task *model.Task, want st
 		return Conflict("模型执行配置已更新，请重新确认")
 	}
 	return nil
+}
+
+func configSignature(repo *repository.Repository, task *model.Task) (string, error) {
+	var input map[string]any
+	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+		return "", err
+	}
+	if isToolInput(input) {
+		return Hash([]any{task.Provider, task.Model, task.Type, task.Operation, task.Prompt, input}), nil
+	}
+	config, _ := input["config"].(map[string]any)
+	return repo.CreationConfigSignature(task, stringValue(config["channelId"]), stringValue(config["model"]))
 }

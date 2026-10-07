@@ -20,6 +20,7 @@ type Tasks interface {
 // Secrets protects credentials after quoting and before durable submit.
 type Secrets interface {
 	Protect(input map[string]any) error
+	Restore(input map[string]any) error
 }
 
 // Quota is workspace structured-storage policy. Creation records and canvas
