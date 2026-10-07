@@ -1,5 +1,6 @@
 import { isVolcengineArkVideoProtocol, type ModelProtocol, type ModelProtocolWorkflow } from "@/lib/model-protocols";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
+import { localComfyModelCapabilityConfig, type LocalComfyModelConfig } from "@/lib/local-comfy-models";
 
 export type ModelCapabilityConfig = {
     version: number;
@@ -602,10 +603,12 @@ export function pluginWorkflowCapabilityConfig(protocol: ModelProtocol, workflow
 }
 
 export function modelCapabilityConfigFor(
-    config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> },
+    config: LocalComfyModelConfig & { channels: Array<{ id: string; models: string[]; baseUrl?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> },
     model: string,
 ) {
     const separator = model.indexOf("::");
+    const localProfile = localComfyModelCapabilityConfig(model, config);
+    if (localProfile) return { ...defaultModelCapabilityConfig(), ...localProfile };
     const channelId = separator >= 0 ? model.slice(0, separator) : "";
     const modelName = separator >= 0 ? model.slice(separator + 2) : model;
     const channel = config.channels.find((item) => item.id === channelId) || config.channels.find((item) => item.models.includes(modelName));

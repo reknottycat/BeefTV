@@ -308,13 +308,16 @@ export function cancelGenerationTask(id: string) {
     });
 }
 
-export function queryFailedVideoProviderTask(id: string) {
-    return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`);
+export function queryFailedVideoProviderTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
+    return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`, undefined, { signal: options?.signal, expectedScope: options?.expectedScope });
 }
 
 export function canRetrieveVideoResult(task: GenerationTask) {
+    if (task.provider === "local-comfy") return (task.status === "failed" || task.status === "cancelled") && (task.type === "canvas_image" || task.type === "canvas_video");
     return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
 }
+
+export const canRetrieveProviderResult = canRetrieveVideoResult;
 
 export function refreshGenerationTaskStatus(id: string, options?: { signal?: AbortSignal }) {
     return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal });

@@ -4,6 +4,7 @@ import { configuredModelMatchesCapability, defaultConfig, normalizeModelOptionVa
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { isLocalComfyModel } from "@/lib/local-comfy-models";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { resolveAudioSpeechSettings } from "@/lib/audio-generation";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
@@ -548,6 +549,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 
 export function resolveCanvasGenerationModel(config: AiConfig, model: string | undefined, mode: CanvasNodeGenerationMode): string {
     if (!model) return "";
+    if (isLocalComfyModel(model) && (mode === "image" || mode === "video")) return model;
     const normalized = normalizeModelOptionValue(model, config.channels);
     if (!normalized) return "";
     return configuredModelMatchesCapability(config, normalized, mode) ? normalized : "";

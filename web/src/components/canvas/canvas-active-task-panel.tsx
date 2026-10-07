@@ -223,7 +223,7 @@ function ActiveTaskCard({
                                 onMouseDown={(event) => event.stopPropagation()}
                             >
                                 <XCircle className="size-3" />
-                                取消任务
+                                {task.provider === "local-comfy" ? "停止跟踪" : "取消任务"}
                             </button>
                         ) : null}
                     </motion.div>

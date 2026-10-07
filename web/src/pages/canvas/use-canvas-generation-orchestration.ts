@@ -211,10 +211,11 @@ export function useCanvasGenerationOrchestration({
 
     const cancelCanvasTask = useCallback(
         (task: GenerationTask) => {
+            const localComfy = task.provider === "local-comfy";
             modal.confirm({
-                title: "取消生成任务？",
-                content: localOnly ? "任务会立即停止本地执行。" : "任务会立即停止本地执行；如果已经提交到上游，系统会继续核对取消结果和积分状态。",
-                okText: "取消任务",
+                title: localComfy ? "停止跟踪这次生成？" : "取消生成任务？",
+                content: localComfy ? "工作台将停止等待，但 GPU 任务可能仍在运行。之后可从任务详情取回原任务结果，不会重新生成。" : localOnly ? "任务会立即停止本地执行。" : "任务会立即停止本地执行；如果已经提交到上游，系统会继续核对取消结果和积分状态。",
+                okText: localComfy ? "停止跟踪" : "取消任务",
                 okButtonProps: { danger: true },
                 cancelText: "继续等待",
                 onOk: async () => {
@@ -224,9 +225,9 @@ export function useCanvasGenerationOrchestration({
                         if (node) bindGenerationTask(node.id, next);
                         setTaskDetail((current) => (current?.id === task.id ? next : current));
                         await queryClient.invalidateQueries({ queryKey: ["canvas-active-tasks", projectId] });
-                        message.success("任务已取消");
+                        message.success(localComfy ? "已停止跟踪；之后可取回原任务结果" : "任务已取消");
                     } catch (error) {
-                        message.error(error instanceof Error ? error.message : "取消任务失败");
+                        message.error(error instanceof Error ? error.message : localComfy ? "停止跟踪失败，请重试" : "取消任务失败");
                     }
                 },
             });

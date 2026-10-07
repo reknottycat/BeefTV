@@ -356,6 +356,8 @@ type ComposerProps = {
     onOpenLibrary: () => void;
     onModeChange: (mode: CreationMode) => void;
     model: string;
+    submissionProblem?: string;
+    fixedModelSummary?: string;
     modelRequirements: ModelRequirements;
     videoProfile: VideoCapabilityConfig;
     imageProfile: ImageCapabilityConfig;
@@ -397,7 +399,7 @@ export function CreationComposer(props: ComposerProps) {
     const [trackState, setTrackState] = useState({ canScrollLeft: false, canScrollRight: false, isExpanded: true, isDragging: false });
     const previousAttachmentCountRef = useRef(0);
     const interactionBusy = props.busy || props.referenceReplacementBusy;
-    const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy;
+    const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy && !props.submissionProblem;
     const priceChannel = resolveModelChannel(props.config, props.model);
     const canOptimizePrompt = Boolean(props.promptOptimizerProvider) && (props.mode === "image" || props.mode === "video");
     const optimizerReferences = props.references.filter((reference) => reference.active && reference.kind !== "skill");
@@ -612,8 +614,8 @@ export function CreationComposer(props: ComposerProps) {
                     </button>
                 </Tooltip> : null}
 				<ModelPicker config={props.config} value={props.model} onChange={props.onModelChange} capability={props.mode} requirements={props.modelRequirements} className="creation-model-picker" placeholder={`选择${modeLabels[props.mode]}模型`} variant="creation" />
-                {props.mode === "video" || (props.mode === "image" && imageSettingsSupported) ? <GenerationSettingsMenu {...props} /> : null}
-                {props.mode === "video" ? <DurationMenu profile={props.videoProfile} seconds={props.seconds} onChange={props.setSeconds} /> : null}
+                {!props.fixedModelSummary && (props.mode === "video" || (props.mode === "image" && imageSettingsSupported)) ? <GenerationSettingsMenu {...props} /> : null}
+                {!props.fixedModelSummary && props.mode === "video" ? <DurationMenu profile={props.videoProfile} seconds={props.seconds} onChange={props.setSeconds} /> : null}
                 {props.mode === "text" ? <>
                     <Tooltip title={interactionBusy ? "生成中，此开关将在下次发送时生效" : (props.textStreaming ? "流式输出已开启" : "流式输出已关闭")}><button type="button" className="creation-chat-control" aria-pressed={props.textStreaming} disabled={interactionBusy} onClick={() => props.setTextStreaming(!props.textStreaming)}><Waves /><span>流式</span></button></Tooltip>
                     <Tooltip title={interactionBusy ? "生成中，此开关将在下次发送时生效" : (props.textThinking ? "思考已开启，会展示模型返回的推理摘要" : "开启模型思考")}><button type="button" className="creation-chat-control" aria-pressed={props.textThinking} disabled={interactionBusy} onClick={() => props.setTextThinking(!props.textThinking)}><Brain /><span>思考</span></button></Tooltip>
@@ -630,12 +632,13 @@ export function CreationComposer(props: ComposerProps) {
                 } as CSSProperties}
                 onClick={interactionBusy ? undefined : props.onSubmit}
                 aria-label={actionLabel}
-                title={!canSubmit && !interactionBusy ? "输入创作想法后即可生成" : actionLabel}
+                title={props.submissionProblem || (!canSubmit && !interactionBusy ? "输入创作想法后即可生成" : actionLabel)}
             >
                 {showWorkingGlow ? <WorkingGlow active color="var(--creation-text)" radius="999px" /> : null}
                 <span className="creation-submit-action" aria-hidden>{showWorkingSpinner ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}</span>
             </Button>
         </footer>
+        {props.submissionProblem || props.fixedModelSummary ? <p role="status" className="px-4 pb-3 text-xs text-foreground/65">{props.submissionProblem || props.fixedModelSummary}</p> : null}
         <CreationMediaPreviewModal url={previewUrl} type={previewType} onClose={() => setPreviewUrl("")} />
         </SpotlightSurface>
     </HoverBorderGradient>;

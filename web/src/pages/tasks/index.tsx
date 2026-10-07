@@ -30,6 +30,8 @@ import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { discoverBackendTasks, mergeTaskHistory } from "./task-discovery";
+import { canRetrieveProviderResult } from "@/services/api/task-center";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError } from "@/lib/user-scope-guard";
 
 type TaskKindFilter = "all" | "text" | "image" | "video";
 type TaskViewMode = "list" | "grid";
@@ -362,27 +364,32 @@ export default function TasksPage() {
     };
 
     const queryProviderTask = async (task: GenerationTask) => {
+        if (actingId) return;
         const request = detailRequestRef.current;
+        const scope = captureUserScope();
         setActingId(task.id);
         try {
-            const result = await queryFailedVideoProviderTask(task.id);
+            const result = await queryFailedVideoProviderTask(task.id, { expectedScope: scope });
+            assertUserScope(scope);
             if (!result.recovered) {
                 const logs = await listTaskLogs(task.id);
                 if (request === detailRequestRef.current) {
                     setTaskLogs(logs);
-                    message.info("原任务仍在处理中，请稍后再取回结果");
+                    message.info(result.providerStatus === "failed" ? "原任务生成失败，已保留记录；请检查原因后在项目中另生成一版" : "原任务尚无可取回结果，请稍后再核验；不会重新提交生成");
                 }
                 return;
             }
             if (request === detailRequestRef.current) setDetailTask(result.task);
             setTasks((items) => items.map((item) => (item.id === task.id ? { ...item, ...result.task } : item)));
             await syncGenerationTaskToCanvasStore(result.task);
+            assertUserScope(scope);
             const logs = await listTaskLogs(task.id).catch(() => undefined);
             if (logs && request === detailRequestRef.current) setTaskLogs(logs);
             if (!localMode) window.dispatchEvent(new CustomEvent("wallet:updated"));
             void loadTasks(false);
-            if (request === detailRequestRef.current) message.success("视频已取回，未重新生成");
+            if (request === detailRequestRef.current) message.success("结果已取回，未重新生成");
         } catch (error) {
+            if (isUserScopeAbandonedError(error)) return;
             if (request === detailRequestRef.current) message.error(error instanceof Error ? error.message : "查询上游任务失败");
         } finally {
             setActingId("");
@@ -552,6 +559,7 @@ export default function TasksPage() {
                             {detailTask.providerCancelStatus ? <InfoItem label="上游取消" value={providerCancelStatusLabel(detailTask)} /> : null}
                             {detailTask.providerCancelRequestedAt ? <InfoItem label="请求取消时间" value={formatDate(detailTask.providerCancelRequestedAt)} /> : null}
                         </div>
+                        {detailTask.provider === "local-comfy" && (detailTask.status === "cancelled" || detailTask.status === "failed") ? <Alert type="info" showIcon title="查询原任务，不会重新生成" description="停止跟踪不会中断 GPU 任务。请先取回原任务结果；需要新的版本时，回到项目重新生成。" /> : null}
                         <div className="flex flex-wrap justify-end gap-2">
                             {canQueryProviderTask(detailTask) ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>取回结果</Button> : null}
                             {isTaskFailed(detailTask) ? <Button icon={<Bug className="size-4" />} onClick={() => navigate(`/settings?section=diagnostics&taskId=${encodeURIComponent(detailTask.id)}${detailTask.projectId ? `&projectId=${encodeURIComponent(detailTask.projectId)}` : ""}`)}>导出诊断包</Button> : null}
@@ -601,7 +609,7 @@ export default function TasksPage() {
 }
 
 function canQueryProviderTask(task: GenerationTask) {
-    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
+    return canRetrieveProviderResult(task);
 }
 
 function TaskResultMedia({ value, taskType }: { value?: string; taskType: string }) {

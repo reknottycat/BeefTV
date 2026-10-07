@@ -5,6 +5,7 @@ import { App } from "antd";
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
+import { isLocalComfyModel, localComfyGenerationProblem } from "@/lib/local-comfy-models";
 import { buildConfirmedGenerationConfig } from "./canvas-assistant-proposal-execution";
 import type { ConfirmedGenerationInputs } from "./canvas-assistant-proposal-snapshot";
 import { canvasGenerationPromptMetadata, canvasGenerationRequestFingerprint, runCanvasGenerationSubmissionOnce } from "@/lib/canvas/canvas-generation-submission";
@@ -150,6 +151,10 @@ export function useCanvasGenerationExecutor({
                         );
                     }
                     if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                        if (isLocalComfyModel(generationConfig.model)) {
+                            message.warning(localComfyGenerationProblem(generationConfig, generationConfig.model));
+                            return;
+                        }
                         navigateToSettings({ continueCreation: true });
                         return;
                     }
@@ -169,7 +174,7 @@ export function useCanvasGenerationExecutor({
                     // 模型视频接口才把提示词视为纯文本输入。
                     const usesWorkflowProvider = Boolean(mode !== "text" && generationConfig.taskWorkflowProvider && generationConfig.taskWorkflowProvider !== "model");
                     // 普通视频协议只保留输入框文本（显式 @文本 引用仍会展开为真实内容）；声明式工作流还要保留连接媒体。
-                    const promptOnly = mode === "video" && !usesWorkflowProvider;
+                    const promptOnly = mode === "video" && !usesWorkflowProvider && !isLocalComfyModel(generationConfig.model);
                     try {
                         const baseContext = buildNodeGenerationContext(
                             nodeId,
