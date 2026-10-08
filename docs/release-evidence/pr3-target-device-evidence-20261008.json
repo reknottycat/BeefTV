@@ -1,0 +1,170 @@
+{
+  "kind": "PR3 scoped review evidence, not release acceptance",
+  "date": "2026-10-08",
+  "productHead": "16538957ac42a26ad38effb20bf6e85022d1ea63",
+  "diffBase": "c8956171e61a19663206f6a4e7591f3bd3cb57b9",
+  "environment": {
+    "os": "Linux x86_64",
+    "python": "3.12.14",
+    "go": "1.25.1",
+    "bun": "1.3.9",
+    "ffmpeg": "6.1.1-3ubuntu5",
+    "playwright": "1.63.0",
+    "playwrightCore": "1.63.0",
+    "webmExplicitBrowser": "Chromium 134.0.6998.35 (headless-shell revision 1161)",
+    "h264AttemptBrowser": "Google Chrome 155.0.8059.39",
+    "defaultPinnedBrowser": "headless-shell revision 1243 unavailable"
+  },
+  "tests": [
+    {
+      "command": "python3 -m unittest discover -s tools/comfy_adapter -p test_adapter.py -v",
+      "status": "passed",
+      "tests": 44,
+      "seconds": 26.308,
+      "boundary": "Temporary SQLite and loopback HTTP mock; no real Comfy/GPU."
+    },
+    {
+      "command": "cd backend && go test ./internal/app -run ^TestNativeComfyFFmpegMP4RecoveryAndImport$ -count=1 -v",
+      "status": "passed",
+      "subtests": [
+        "matching",
+        "dimensions-mismatch",
+        "duration-mismatch"
+      ],
+      "boundary": "Actual FFmpeg H.264 MP4 encode, Go task recovery/resource import and byte/decode verification; adapter remains fixture."
+    },
+    {
+      "command": "BEEFTV_PRODUCTION_MEDIA_TEST=1 bun test test/production-selected-version.browser.test.ts",
+      "status": "environment_blocked",
+      "reason": "Default pinned headless-shell revision 1243 not installed; test did not reach assertions."
+    },
+    {
+      "command": "BEEFTV_PRODUCTION_MEDIA_TEST=1 CHROME_PATH=<explicit cached Chromium 134> bun test test/production-selected-version.browser.test.ts",
+      "status": "passed",
+      "tests": 1,
+      "assertions": 48,
+      "boundary": "Real ProductionPage/Coordinator and native FFmpeg lowerer/executor; business APIs and single-clip semantic plan are fixtures. VP8/WebM browser input previews."
+    },
+    {
+      "command": "BEEFTV_PRODUCTION_MEDIA_TEST=1 BEEFTV_PRODUCTION_MEDIA_FORMAT=mp4 CHROME_PATH=<Chrome 155> bun test test/production-selected-version.browser.test.ts",
+      "status": "unverified_environment_blocked",
+      "reason": "Chrome startup: process_singleton_posix.cc socket() failed: Operation not permitted; no H.264 page assertions executed."
+    }
+  ],
+  "selectedVersionEvidence": {
+    "boundary": "Real ProductionPage/Coordinator and native FFmpeg lowerer/executor; business APIs and single-clip semantic plan are fixtures. VP8/WebM browser input previews.",
+    "originalPixels": {
+      "old": [
+        253,
+        0,
+        0
+      ],
+      "new": [
+        0,
+        0,
+        254
+      ]
+    },
+    "previewPixels": {
+      "baseline": [
+        0,
+        0,
+        253
+      ],
+      "selected": [
+        254,
+        0,
+        0
+      ],
+      "afterCanvasChangeAndReload": [
+        254,
+        0,
+        0
+      ]
+    },
+    "resolvedStorageKey": "resource:old",
+    "outputProbe": {
+      "programs": [],
+      "streams": [
+        {
+          "codec_type": "video",
+          "width": 320,
+          "height": 180
+        },
+        {
+          "codec_type": "audio"
+        }
+      ],
+      "format": {
+        "duration": "2.043356"
+      }
+    },
+    "outputPixels": [
+      {
+        "time": 0.2,
+        "rgb": [
+          253,
+          0,
+          0
+        ]
+      },
+      {
+        "time": 1,
+        "rgb": [
+          253,
+          0,
+          0
+        ]
+      },
+      {
+        "time": 1.8,
+        "rgb": [
+          253,
+          0,
+          0
+        ]
+      }
+    ],
+    "browserErrors": []
+  },
+  "generatedMediaSha256": "49779a87619fe115ca27134b09dc4886a9ea4e43cb49c4326f1ad3ebae046965",
+  "localRawEvidenceDirectory": ".local/acceptance/pr3-20261008",
+  "rawLogSha256": {
+    "adapter-tests.log": "ff26e1ff21054f94df77390b968b9c842708b16cb4ca18475982834fd09ac2d6",
+    "comfy-real-mp4.log": "342e7f13ca6a0b5541ef95ce35a4d0db89153a38c75353723b259f103821aafb",
+    "production-selected-webm.log": "570ad05cec03718bd59811b42f931cf52ead2b3de28593ffab9a1513378b83bf",
+    "production-selected-webm-explicit-browser.log": "e486d5b7b42babf39e0aa26821e5430607e7871cbd80c4273608a112ed425d1b",
+    "production-selected-h264.log": "bdd6e36e5d186ce96f508cd5170564191023265ca4cc706cd5f255280d08cd2a"
+  },
+  "unverified": [
+    "real Comfy/GPU with approved recipe",
+    "target-device adapter and backend process restart plus original-job recovery",
+    "real target backend/UI/resource/renderer integration",
+    "H.264 browser and desktop WebView preview",
+    "Windows/macOS target-device acceptance"
+  ],
+  "releaseReady": false,
+  "integration": {
+    "main": "97c9d7088bc731f1b525d51352c77ccfbd0c2dad",
+    "pr2Head": "c8956171e61a19663206f6a4e7591f3bd3cb57b9",
+    "productTreeBeforeAndAfterMainMerge": "7fbcd19ab7b257294044867c5ed841b2895fc04a",
+    "conflicts": false,
+    "additionalChanges": "Two review-evidence files only",
+    "pr3Draft": true,
+    "freshCI": "See current PR3 HEAD checks; previous green checks are not new-head evidence"
+  },
+  "pr2Supplemental": {
+    "head": "c8956171e61a19663206f6a4e7591f3bd3cb57b9",
+    "connectionTopLevelTests": 29,
+    "failures": 0,
+    "baselineDnsFailures": {
+      "base": "36c9f6781c4df4e5bf9f3d8d3837a5442509f331",
+      "tests": [
+        "TestResolveProviderConfigMapsSKUToProviderModel",
+        "TestResolveProviderConfigRejectsHostileUpstreamKey"
+      ],
+      "sameFailureOnPr2": true,
+      "reason": "Environment cannot resolve fixture supplier hostname; no test or network policy changes"
+    }
+  }
+}
