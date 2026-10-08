@@ -19,6 +19,12 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 ## 核心路由组
 
+本地制作工具仍通过 CreationRun 的 prepare → approve → execute 与同一事务围栏准入。
+Comfy 提案绑定 `metadata.localComfyRecipeId` 与 `metadata.localComfyRecipeVersion`，服务端读取固定 output 与参考合同；
+RunningHub 工具标识必须与实际 app/workflow ID 一致，媒体工具不能用作导演文本模型。
+prepare/approve 不提交 GPU 作业。工作流凭据在 submission RequestJSON 持久化前加密，语义签名使用相同明文快照，
+不把随机加密 nonce 当配置变化。execute 再检查批准与当前工具合同。
+
 `canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。
 
 首次确认同时核对这两个持久版本、未保存的编辑和确认期间的变化。旧历史中没有 `source` 的提案需要重新提出。通过核对后，生成沿用已有模型解析规则，并使用确认时复制的提示词、节点、连线和全局参数。此版本合同不包含素材库独立更新、hydrate 时解析的动态角色版本或任意远端 URL 的内容字节变化。
@@ -26,6 +32,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 | 路由组 | 用途 |
 | --- | --- |
 | `/workspace/*` | 本地工作区启动和模型配置 |
+| `/local-comfy/v1/config`, `/local-comfy/v1/recipes` | 已配置本地生成设备的只读能力；作业执行和恢复沿原生 task API |
 | `/beefapi/connection*` | 内置 BeefAPI 企业连接：开始、状态、取消、断开；页面只收到账号和状态，收不到密钥 |
 | `/canvas-projects/*`, `/projects/*` | 画布、项目、章节、分镜与快照 |
 | `/resources/*` | 本地素材、分片上传和媒体读取 |

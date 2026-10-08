@@ -25,10 +25,12 @@ export function taskAttentionReason(task: GenerationTask) {
 }
 
 export function taskRetryBlocked(task: GenerationTask) {
+    if (task.provider === "local-comfy" && (task.status === "failed" || task.status === "cancelled")) return true;
     return shouldBlockAutomaticRetry({ code: task.errorCode, message: task.error }, task.stage);
 }
 
 export function providerCancelStatusLabel(task: GenerationTask) {
+    if (task.provider === "local-comfy") return "已停止跟踪，GPU 任务可能仍在运行；打开详情取回原任务结果";
     if (task.providerCancelStatus === "requested") return "已请求上游取消，正在等待确认";
     if (task.providerCancelStatus === "confirmed") return "上游已确认取消";
     if (task.providerCancelStatus === "uncertain") {

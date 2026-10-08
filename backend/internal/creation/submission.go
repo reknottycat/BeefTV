@@ -68,7 +68,7 @@ func (s *Service) buildSubmission(userID string, repo *repository.Repository, ru
 	if err != nil {
 		return model.CreationSubmission{}, normalized, err
 	}
-	signature, err := repo.CreationConfigSignature(prepared.Task, stringValue(prepared.Config["channelId"]), stringValue(prepared.Config["model"]))
+	signature, err := configSignature(repo, prepared.Task)
 	if err != nil {
 		return model.CreationSubmission{}, normalized, err
 	}
@@ -77,14 +77,25 @@ func (s *Service) buildSubmission(userID string, repo *repository.Repository, ru
 	if err != nil {
 		return model.CreationSubmission{}, normalized, err
 	}
-	requestJSON, err := json.Marshal(normalized)
+	requestHash := Hash(normalized)
+	protected, err := cloneJSON(normalized)
+	if err != nil {
+		return model.CreationSubmission{}, normalized, err
+	}
+	if s.deps.Secrets == nil {
+		return model.CreationSubmission{}, normalized, kernel.NewAppError(kernel.CodeInternal, "任务密钥保护不可用")
+	}
+	if err = s.deps.Secrets.Protect(protected.Input); err != nil {
+		return model.CreationSubmission{}, normalized, err
+	}
+	requestJSON, err := json.Marshal(protected)
 	if err != nil {
 		return model.CreationSubmission{}, normalized, err
 	}
 	item := model.CreationSubmission{
 		ID: s.deps.newID(), UserID: userID, RunID: run.ID, ItemKey: itemKey,
 		ProposalVersion: proposalVersion, ProposalHash: run.ApprovedProposalHash,
-		RequestJSON: string(requestJSON), RequestHash: Hash(normalized),
+		RequestJSON: string(requestJSON), RequestHash: requestHash,
 		ExecutionJSON: executionRaw, ConfigSignature: signature,
 	}
 	return item, normalized, nil
@@ -107,6 +118,17 @@ func (s *Service) quoteTask(userID string, repo *repository.Repository, req *Tas
 	if prepared == nil || prepared.Task == nil {
 		return nil, kernel.NewAppError(kernel.CodeInternal, "任务准备未返回可执行描述")
 	}
+	if isToolInput(req.Input) {
+		if prepared.Input == nil {
+			if err = json.Unmarshal([]byte(prepared.Task.InputJSON), &prepared.Input); err != nil {
+				return nil, err
+			}
+		}
+		if err = freezePreparedRecipe(req, prepared); err != nil {
+			return nil, err
+		}
+		return prepared, nil
+	}
 	if err = matchResolvedSpec(requested, prepared.Config); err != nil {
 		return nil, err
 	}
@@ -126,6 +148,17 @@ func (s *Service) quoteTask(userID string, repo *repository.Repository, req *Tas
 	return prepared, nil
 }
 
+func (s *Service) restoreRequest(raw string) (TaskRequest, error) {
+	var request TaskRequest
+	if err := json.Unmarshal([]byte(raw), &request); err != nil {
+		return request, err
+	}
+	if s.deps.Secrets == nil {
+		return request, kernel.NewAppError(kernel.CodeInternal, "任务密钥恢复不可用")
+	}
+	return request, s.deps.Secrets.Restore(request.Input)
+}
+
 func (s *Service) Approve(userID, id string, cmd Command) (map[string]any, error) {
 	if len(cmd.SubmissionIDs) == 0 || len(cmd.SubmissionIDs) > 20 {
 		return nil, kernel.BadAuthRequest("请选择 1 到 20 项生成任务")
@@ -137,15 +170,15 @@ func (s *Service) Approve(userID, id string, cmd Command) (map[string]any, error
 		if err != nil {
 			return nil, MapError(err)
 		}
-		var request TaskRequest
-		if err = json.Unmarshal([]byte(item.RequestJSON), &request); err != nil {
+		request, err := s.restoreRequest(item.RequestJSON)
+		if err != nil {
 			return nil, err
 		}
 		quoted, err := s.quoteTask(userID, s.repo, &request)
 		if err != nil {
 			return nil, err
 		}
-		sig, err := s.repo.CreationConfigSignature(quoted.Task, stringValue(quoted.Config["channelId"]), stringValue(quoted.Config["model"]))
+		sig, err := configSignature(s.repo, quoted.Task)
 		if err != nil {
 			return nil, err
 		}
@@ -214,8 +247,8 @@ func (s *Service) Execute(userID, id string, cmd Command) (*model.Task, error) {
 		}
 		return task, nil
 	}
-	var request TaskRequest
-	if err = json.Unmarshal([]byte(item.RequestJSON), &request); err != nil {
+	request, err := s.restoreRequest(item.RequestJSON)
+	if err != nil {
 		return nil, err
 	}
 	if err = ValidateSubmissionScope(run, item.ProposalVersion, request); err != nil {
@@ -228,13 +261,15 @@ func (s *Service) Execute(userID, id string, cmd Command) (*model.Task, error) {
 	if quoted == nil || quoted.Task == nil {
 		return nil, kernel.NewAppError(kernel.CodeInternal, msgAdmitNilTask)
 	}
-	signature, err := s.repo.CreationConfigSignature(quoted.Task, stringValue(quoted.Config["channelId"]), stringValue(quoted.Config["model"]))
+	signature, err := configSignature(s.repo, quoted.Task)
 	if err != nil {
 		return nil, err
 	}
 	if executionFor(quoted.Task, signature).ConfigHash != SubmissionView(*item).Execution.ConfigHash {
 		return nil, Conflict("执行配置已变化，请重新确认")
 	}
+	// Preserve the semantic snapshot across randomized credential encryption.
+	preparedTask := *quoted.Task
 	input := quoted.Input
 	if input == nil {
 		if e := json.Unmarshal([]byte(quoted.Task.InputJSON), &input); e != nil {
@@ -282,7 +317,7 @@ func (s *Service) Execute(userID, id string, cmd Command) (*model.Task, error) {
 		if fresh.ProposalVersion > 0 && fresh.ProposalHash != current.ApprovedProposalHash {
 			return repository.ErrCreationConflict
 		}
-		if e = checkConfigSignature(repo, quoted.Task, signature); e != nil {
+		if e = checkConfigSignature(repo, &preparedTask, signature); e != nil {
 			return e
 		}
 		task, e := s.deps.Tasks.Admit(userID, repo, quoted.Task)

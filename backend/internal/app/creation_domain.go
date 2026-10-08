@@ -105,6 +105,10 @@ func (a creationSecretsAdapter) Protect(input map[string]any) error {
 	return a.s.protectTaskSecrets(input)
 }
 
+func (a creationSecretsAdapter) Restore(input map[string]any) error {
+	return a.s.decryptTaskSecrets(input)
+}
+
 type creationQuotaAdapter struct{ s *Service }
 
 func (a creationQuotaAdapter) ValidateRun(userID string, repo *repository.Repository, creating bool, delta int64) error {

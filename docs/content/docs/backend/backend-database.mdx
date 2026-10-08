@@ -5,6 +5,10 @@ description: BeefTV后端核心持久化表与状态边界
 
 # 后端数据库
 
+本地 Comfy 可选适配服务使用独立 SQLite 账本，不新增工作区主数据库表。
+其 `objects`、`job_keys` 和 `job_identity` 分别保存内部映射、请求去重与镜头 attempt 身份；
+配方版本保存在 job payload 中。部署与一致性备份见 [本地 Comfy 生成](./local-comfy)。
+
 后端通过 GORM 管理 SQLite 与 PostgreSQL 表结构。Backend 启动时按版本顺序应用缺失迁移并写入 `schema_migrations`；公开 Compose 显式启用 `CANVAS_AUTO_MIGRATE=true`。业务写路径必须通过 service 和 repository 的状态约束，不能直接依赖前端状态。
 
 ## 结构迁移与版本

@@ -65,14 +65,14 @@ export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading,
                         {task.error ? <p role="status" className="whitespace-pre-wrap break-words">{task.error}</p> : null}
                         {onRetrieveTask && canRetrieveVideoResult(task) ? (
                             <div className="flex flex-wrap items-center justify-between gap-3">
-                                <p>查询原任务并取回视频，不会重新生成。</p>
+                                <p>{task.provider === "local-comfy" ? "停止跟踪不会中断 GPU 任务。查询原任务并取回结果，不会重新生成。" : "查询原任务并取回视频，不会重新生成。"}</p>
                                 <Button loading={retrievingTaskId === task.id} onClick={() => onRetrieveTask(task)}>取回结果</Button>
                             </div>
                         ) : null}
                         {onCancelTask && (task.status === "queued" || task.status === "running") ? (
                             <div className="flex justify-end">
                                 <Button danger icon={<XCircle className="size-4" />} onClick={() => onCancelTask(task)}>
-                                    取消任务
+                                    {task.provider === "local-comfy" ? "停止跟踪" : "取消任务"}
                                 </Button>
                             </div>
                         ) : null}

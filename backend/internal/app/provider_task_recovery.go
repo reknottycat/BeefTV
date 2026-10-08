@@ -66,6 +66,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	if task == nil || task.ID == "" {
 		return nil, BadAuthRequest("任务不存在")
 	}
+	if taskInputIsLocalComfy(task.InputJSON) {
+		return s.queryLocalComfyTask(ctx, task)
+	}
 	if task.Status != model.TaskStatusFailed {
 		return nil, BadAuthRequest("只能人工查询状态为失败的任务")
 	}

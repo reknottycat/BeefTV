@@ -7,6 +7,10 @@ import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, isChannelReady } from "./channel-settings-pane";
 import { ModelDefaultGrid } from "./model-default-grid";
+import { LocalComfySettingsPane } from "./local-comfy-settings-pane";
+import { ModelConfigSaveFeedback } from "@/components/model-config-save-feedback";
+import { localComfySelectableModels } from "@/lib/local-comfy-models";
+import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
 
 type ConfigSectionKey = "channels" | "models";
 
@@ -55,7 +59,9 @@ export default function SettingsPage() {
         setSearchParams(next, { replace: true });
     };
 
-    const finishConfig = () => {
+    const [saving, setSaving] = useState(false);
+    const finishConfig = async () => {
+        if (saving) return;
         const invalidChannel = customChannelsEnabled ? userChannels.find((channel) => channelValidationError(channel)) : undefined;
         if (invalidChannel) {
             selectSection("channels");
@@ -63,18 +69,27 @@ export default function SettingsPage() {
             focusInvalidChannelField(invalidChannel);
             return;
         }
-        if (!effectiveConfig.channels.some(isChannelReady)) {
+        if (!effectiveConfig.channels.some(isChannelReady) && !localComfySelectableModels(effectiveConfig).length) {
             selectSection("channels");
             message.error(customChannelsEnabled ? (shouldPromptContinue ? "请先完成至少一个渠道的 Base URL、API Key 和模型配置" : "当前没有可用渠道，请先完成连接信息和模型配置") : "当前没有可用的系统模型，请联系管理员配置系统渠道");
             return;
         }
-        message.success("配置已保存，正在返回创作页面");
-        navigate(-1);
+        setSaving(true);
+        try {
+            await flushModelConfig();
+            const state = getModelConfigPersistenceState();
+            if (state.dirty || state.status === "error") throw new Error("配置尚未保存，请重试；当前选择已保留");
+            message.success("配置已保存，正在返回创作页面");
+            navigate(-1);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "配置保存失败，请重试");
+        } finally { setSaving(false); }
     };
 
     const panes: Record<ConfigSectionKey, ReactNode> = {
         channels: (
             <SettingsPane>
+                <LocalComfySettingsPane />
                 <ChannelSettingsPane />
                 <div className="settings-section mt-4">
                     <div className="settings-pane-header">
@@ -83,6 +98,7 @@ export default function SettingsPage() {
                         </div>
                     </div>
                     <ModelDefaultGrid config={effectiveConfig} onChange={(key, model) => updateConfig(key, model)} />
+                    <ModelConfigSaveFeedback />
                 </div>
             </SettingsPane>
         ),
@@ -107,7 +123,7 @@ export default function SettingsPage() {
                 <div className="settings-topbar shrink-0">
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                         <Button icon={<ArrowLeft className="size-4" />} onClick={() => navigate(-1)}>返回创作</Button>
-                        <Button type="primary" onClick={finishConfig}>保存并返回</Button>
+                        <Button type="primary" loading={saving} onClick={() => void finishConfig()}>保存并返回</Button>
                     </div>
                 </div>
             ) : null}

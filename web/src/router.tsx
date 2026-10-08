@@ -18,6 +18,7 @@ const NotFound = lazy(() => import("@/pages/not-found"));
 const PluginsPage = lazy(() => import("@/pages/plugins"));
 const EagleLibraryPage = lazy(() => import("@/pages/plugins/eagle"));
 const ProjectDetailPage = lazy(loadProjectDetailPage);
+const ProductionPage = lazy(() => import("@/pages/production"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const TestVoiceRecording = lazy(() => import("@/pages/test-voice-recording"));
 const UserLayout = lazy(() => import("@/layouts/user-layout"));
@@ -127,6 +128,7 @@ export const router = createWorkspaceRouter([
             },
             { path: "/canvas", element: deferred(<CanvasPage />) },
             { path: "/canvas/:id", element: <CanvasProjectPage /> },
+            { path: "/canvas/:id/production", element: deferred(<ProductionPage />) },
         ],
     },
     { path: "*", element: fullScreenDeferred(<NotFound />) },

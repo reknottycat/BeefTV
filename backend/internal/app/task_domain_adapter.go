@@ -69,6 +69,9 @@ type taskCatalogAdapter struct{ s *Service }
 
 func (a taskCatalogAdapter) Select(userID string, req localtask.SelectRequest) (localtask.SelectResult, error) {
 	input := req.Input
+	if localComfyInput(input) || strings.HasPrefix(req.Model, "local-comfy:") {
+		return a.s.selectLocalComfyTask(userID, req)
+	}
 	if modelcatalog.TaskInputUsesWorkflowProvider(input) {
 		config, _ := input["config"].(map[string]any)
 		if err := a.s.RequireWorkflowPluginForUser(userID, strings.TrimSpace(fmt.Sprint(config["interfaceType"]))); err != nil {
@@ -106,14 +109,23 @@ func (a taskCatalogAdapter) Select(userID string, req localtask.SelectRequest) (
 }
 
 func (a taskCatalogAdapter) PrepareRetry(task *model.Task, input map[string]any) error {
+	if localComfyInput(input) {
+		return a.s.prepareLocalComfyRetry(task, input)
+	}
 	return a.s.prepareLogicalTaskRetry(task, input)
 }
 
 func (a taskCatalogAdapter) RequireCustomChannels(input map[string]any) error {
+	if localComfyInput(input) {
+		return nil
+	}
 	return a.s.requireCustomChannelsForTaskInput(input)
 }
 
 func (a taskCatalogAdapter) ValidateCapability(input map[string]any) error {
+	if localComfyInput(input) {
+		return nil
+	}
 	return a.s.ValidateTaskCapability(input)
 }
 
@@ -124,6 +136,9 @@ func (taskCatalogAdapter) HasExecutableVideoConfig(input map[string]any) bool {
 type taskSecretsAdapter struct{ s *Service }
 
 func (a taskSecretsAdapter) ResolveManaged(input map[string]any) (map[string]any, error) {
+	if localComfyInput(input) {
+		return input, nil
+	}
 	return a.s.resolveManagedBeefAPISecrets(input)
 }
 

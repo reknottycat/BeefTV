@@ -40,6 +40,10 @@ type Catalog interface {
 }
 
 type SelectRequest struct {
+	ProjectID      string
+	Model          string
+	Provider       string
+	Prompt         string
 	Input          map[string]any
 	LogicalModelID string
 	Type           string

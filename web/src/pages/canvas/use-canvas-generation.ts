@@ -298,10 +298,10 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
             queryClient.setQueryData(["task-details", projectId, task.id], (current: { task: GenerationTask; logs: unknown[] } | undefined) => ({ task: result.task, logs: current?.logs ?? [] }));
             if (result.recovered) {
                 const node = nodesRef.current.find((item) => item.metadata?.taskId === task.id);
-                if (!node) throw new Error("视频已取回，请在生成历史中查看");
+                if (!node) throw new Error("结果已取回，请在生成历史中查看");
                 await applyGenerationTaskResult(node.id, result.task);
                 if (signal.aborted) return;
-                message.success("视频已取回并放回画布，未重新生成");
+                message.success("结果已取回并放回画布，未重新生成");
             } else {
                 message.info("原任务仍在处理中，请稍后再取回结果");
             }

@@ -52,7 +52,18 @@ func ValidateSubmissionScope(run *model.CreationRun, version int64, req TaskRequ
 			return Conflict("模型与已批准方案不同")
 		}
 		config, _ := req.Input["config"].(map[string]any)
+		if selection, ok := req.Input["localComfy"].(map[string]any); ok {
+			if stringValue(meta["localComfyRecipeId"]) == "" || stringValue(meta["localComfyRecipeId"]) != stringValue(selection["recipeId"]) || stringValue(meta["localComfyRecipeVersion"]) == "" || stringValue(meta["localComfyRecipeVersion"]) != stringValue(selection["recipeVersion"]) {
+				return Conflict("Comfy 配方或版本与已批准方案不同")
+			}
+			// The first scope check precedes catalog resolution. Once prepared,
+			// compare the server recipe output as well as its approved version.
+			config = recipeOptions(req.Input)
+		}
 		for _, key := range []string{"size", "videoSeconds", "vquality", "quality"} {
+			if req.Input["localComfy"] != nil && config == nil {
+				continue
+			}
 			metadataKey := key
 			if key == "videoSeconds" {
 				metadataKey = "seconds"

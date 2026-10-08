@@ -5,9 +5,10 @@ import { Popover } from "antd";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { compatibleModelInGroup, configuredModelDisplayName, groupModelsByDisplayName, modelCompatibilityError, resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
 import { cn } from "@/lib/utils";
-import { modelDisplayName, modelIcon, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { channelHasGenerationCredential, modelDisplayName, modelIcon, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { ModelLogo } from "@/components/model-logo";
+import { isLocalComfyModel, LOCAL_COMFY_MODEL_GROUP, localComfyGenerationProblem, localComfyModelProblem, localComfyModelSummary, localComfyStatusMessage } from "@/lib/local-comfy-models";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -63,7 +64,8 @@ export function ModelPicker({
             .filter((group) => group.models.length);
         // options 已由当前有效渠道重建；任何无法解析渠道的旧值都直接丢弃，
         // 不再显示“其他模型 / 未指定渠道”这种不可用入口。
-        return channelGroups;
+        const localModels = options.filter(isLocalComfyModel);
+        return localModels.length ? [...channelGroups, { key: LOCAL_COMFY_MODEL_GROUP, label: "本地 ComfyUI", scope: "登记工作流", models: groupModelsByDisplayName(config, localModels) }] : channelGroups;
     }, [config, options]);
     const storedCurrent = value?.trim() || "";
     // 参数档位会在选中模型后由调用方归一到其能力配置，不能因为旧模型留下的参数而禁止切换。
@@ -71,10 +73,12 @@ export function ModelPicker({
     const resolvedCurrent = resolveCompatibleModel(config, storedCurrent, selectionRequirements) || storedCurrent;
     // 旧画布可能保存过已下架或前端历史内置模型；它们不能重新进入当前可选目录。
     const current = options.includes(resolvedCurrent) ? resolvedCurrent : "";
+    const savedLocalProblem = isLocalComfyModel(storedCurrent) ? localComfyModelProblem(config, storedCurrent, capability) : "";
     const creationVariant = variant === "creation";
+    const missingConnection = current && !isLocalComfyModel(current) && !channelHasGenerationCredential(resolveModelChannel(config, current));
     const triggerLabel = current
-        ? (creationVariant ? pickerModelDisplayName(config, current, showConfiguredModelName) : pickerModelOptionLabel(config, current, showConfiguredModelName))
-        : placeholder;
+        ? `${creationVariant ? pickerModelDisplayName(config, current, showConfiguredModelName) : pickerModelOptionLabel(config, current, showConfiguredModelName)}${missingConnection ? "（连接未配置）" : ""}`
+        : savedLocalProblem ? `${pickerModelDisplayName(config, storedCurrent, showConfiguredModelName)}（未就绪）` : placeholder;
 
     useLayoutEffect(() => {
         const trigger = triggerRef.current;
@@ -234,6 +238,7 @@ export function ModelPicker({
             ) : (
                 <div className="canvas-model-picker-empty" style={{ color: theme.node.muted }}>
                     {emptyModelLabel(config, capability)}
+                    {(capability === "image" || capability === "video") && config.localComfyStatus ? <p className="mt-2 text-xs" role="status">{localComfyStatusMessage(config.localComfyStatus)}</p> : null}
                 </div>
             )}
         </div>
@@ -261,7 +266,7 @@ export function ModelPicker({
                     aria-haspopup="listbox"
                     aria-expanded={open}
                     aria-label={triggerLabel}
-                    title={current ? pickerModelOptionLabel(config, current, showConfiguredModelName) : placeholder}
+                    title={savedLocalProblem || (current ? pickerModelOptionLabel(config, current, showConfiguredModelName) : placeholder)}
                     onKeyDown={handleTriggerKeyDown}
                 >
                     <span className="canvas-model-picker-label flex min-w-0 items-center gap-1.5">
@@ -293,6 +298,8 @@ function ModelLabel({
         <span className="canvas-model-picker-option-content flex w-full min-w-0 items-center overflow-hidden">
             <span className="canvas-model-picker-option-name block min-w-0 flex-1 truncate text-[var(--fs-label)] font-medium leading-none">
                 {pickerModelDisplayName(config, model, showConfiguredModelName)}
+                {isLocalComfyModel(model) ? <span className="mt-1 block whitespace-normal text-xs font-normal leading-5 text-foreground/65">{localComfyModelSummary(model, config)}{localComfyGenerationProblem(config, model) ? ` · ${localComfyGenerationProblem(config, model)}` : ""}</span> : null}
+                {!isLocalComfyModel(model) && !channelHasGenerationCredential(resolveModelChannel(config, model)) ? <span className="mt-1 block text-xs font-normal leading-5 text-foreground/65">连接未配置，暂不能提交生成</span> : null}
             </span>
         </span>
     );
@@ -303,6 +310,7 @@ function pickerModelDisplayName(config: AiConfig, model: string, showConfiguredM
 }
 
 function pickerModelOptionLabel(config: AiConfig, model: string, showConfiguredModelName: boolean) {
+    if (isLocalComfyModel(model)) return `${pickerModelDisplayName(config, model, showConfiguredModelName)}（本地 ComfyUI） · ${localComfyModelSummary(model, config)}`;
     const displayName = showConfiguredModelName ? configuredModelDisplayName(config, model) : modelDisplayName(config, model);
     const channel = resolveModelChannel(config, model);
     return channel.scope === "system" ? displayName : `${displayName}（${channel.name}）`;

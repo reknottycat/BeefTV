@@ -28,6 +28,9 @@ Wails / local dev
 | 任务域 | `backend/internal/task` | 本地任务命令、列表读模型、生命周期，以及本机 ffmpeg/转写/深度捕捉的准入 |
 | 生成结果交付 | `backend/internal/taskdelivery` | 第一段把生成 dataURL/字节写入本地资源并改写 ResultJSON；第二段在任务成功后物化素材。不发起新的上游生成 |
 | 生成域 | `backend/internal/generation` | 统一生成输入、引用、能力、registry 协议调度和失败归类 |
+| 本地 Comfy 协议 | `backend/internal/localcomfy` | 可信 adapter 客户端、配方版本与输出准入、原作业身份恢复；资源与租约通过窄端口进入 |
+| Comfy 持久作业 | `tools/comfy_adapter` | 固定 Comfy 上游、私有工作流、SQLite 去重账本与归档；内部映射不作为第二套项目 UI |
+| 制作审批 | `backend/internal/creation` | CreationRun 的方案批准、工具冻结、加密提交与执行事务；前端 `production-coordinator.ts` 协调现有业务 API |
 | 供应商适配 | `backend/internal/provider`, `protocol`, `outbound` | 外部模型 API、自定义渠道和插件协议 |
 | 模型目录 | `backend/internal/modelcatalog` | 能力合同、渠道目录校验/解析/合并与 BeefAPI/WhatsToken overlay；出站 HTTP 仍走 outbound |
 | 协议插件 | `backend/internal/plugins` | registry、安装/启用和渠道设置用的 provider 能力目录；live 快照按 Runtime 隔离 |

@@ -63,6 +63,10 @@ func (s *Service) admit(userID string, req CreateRequest) (*model.Task, error) {
 		return nil, err
 	}
 	selected, err := s.deps.Catalog.Select(userID, SelectRequest{
+		ProjectID:      req.ProjectID,
+		Model:          req.Model,
+		Provider:       req.Provider,
+		Prompt:         prompt,
 		Input:          normalizedInput,
 		LogicalModelID: strings.TrimSpace(req.LogicalModelID),
 		Type:           taskType,

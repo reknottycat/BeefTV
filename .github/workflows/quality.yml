@@ -17,6 +17,15 @@ permissions:
 # Core behavior checks run on every change. Formatting stays a local command.
 # Browser coverage lives in director-e2e.yml and runs for web changes or on demand.
 jobs:
+  comfy-adapter:
+    name: Local Comfy adapter checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify durable jobs and approved recipes without GPU
+        run: python3 -m unittest discover -s tools/comfy_adapter -p test_adapter.py
+
   release-publisher:
     name: Release publisher checks
     runs-on: ubuntu-latest

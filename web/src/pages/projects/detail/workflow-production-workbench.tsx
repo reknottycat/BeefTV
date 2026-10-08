@@ -13,6 +13,8 @@ import { Link, useNavigate } from "react-router";
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ModelPicker } from "@/components/model-picker";
+import { isLocalComfyModel, localComfyGenerationProblem } from "@/lib/local-comfy-models";
+import { projectGenerationModelSelection } from "@/lib/project-generation-model-defaults";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
 import { customShotTitle, formatShotOrdinal, normalizeDefaultShotTitle } from "@/lib/shot-label";
 import { modelCompatibilityError, resolveCompatibleModel, resolveModelVideoBooleanOptions, type ModelRequirements } from "@/lib/model-selection";
@@ -112,10 +114,12 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const modelOptions = useMemo(() => selectableModelsByCapability(effectiveConfig, generationCapability), [effectiveConfig, generationCapability]);
     const projectDefaultModel = generationCapability === "video" ? detail.project.defaultVideoModel : detail.project.defaultImageModel;
     const globalDefaultModel = generationCapability === "video" ? effectiveConfig.videoModel : effectiveConfig.imageModel;
-    const defaultModel = projectDefaultModel && configuredModelMatchesCapability(effectiveConfig, projectDefaultModel, generationCapability) ? projectDefaultModel : globalDefaultModel;
+    const defaultModel = projectDefaultModel && (isLocalComfyModel(projectDefaultModel) || configuredModelMatchesCapability(effectiveConfig, projectDefaultModel, generationCapability)) ? projectDefaultModel : globalDefaultModel;
     const initialModel = defaultModel || modelOptions[0] || "";
     const [selectedModel, setSelectedModel] = useState(initialModel);
     const selectedModelRef = useRef(initialModel);
+    const modelContextRef = useRef("");
+    const modelProfileRef = useRef("");
     const [aspectRatio, setAspectRatio] = useState(detail.project.aspectRatio || "16:9");
     const [resolution, setResolution] = useState(effectiveConfig.vquality || "720");
     const [imageQuality, setImageQuality] = useState(effectiveConfig.quality || "auto");
@@ -169,10 +173,17 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const resolutionSummary = generationCapability === "video" ? formatVideoResolutionLabel(resolution) : imageQuality.toUpperCase();
 
     useEffect(() => {
-        selectedModelRef.current = initialModel;
-        setSelectedModel(initialModel);
-        if (!initialModel) return;
-        const profile = modelCapabilityConfigFor(effectiveConfig, initialModel);
+        const context = JSON.stringify([projectId, generationCapability]);
+        const contextChanged = modelContextRef.current !== context;
+        const model = projectGenerationModelSelection(selectedModelRef.current, initialModel, contextChanged);
+        modelContextRef.current = context;
+        selectedModelRef.current = model;
+        setSelectedModel(model);
+        if (!model) return;
+        const profile = modelCapabilityConfigFor(effectiveConfig, model);
+        const signature = JSON.stringify([model, profile]);
+        if (!contextChanged && modelProfileRef.current === signature) return;
+        modelProfileRef.current = signature;
         if (generationCapability === "video" && profile.video) {
             const normalized = normalizeVideoValue(profile.video, {
                 seconds: effectiveConfig.videoSeconds,
@@ -187,7 +198,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
             setAspectRatio(normalized.size);
             setImageQuality(normalized.quality);
         }
-    }, [detail.project.aspectRatio, effectiveConfig, form, generationCapability, initialModel]);
+    }, [detail.project.aspectRatio, effectiveConfig, form, generationCapability, initialModel, projectId]);
 
     useEffect(() => {
         const shotDurationSeconds = Math.max(0.5, (revision?.durationMs || selectedShot?.durationMs || 3000) / 1000);
@@ -213,7 +224,8 @@ export default function WorkflowProductionWorkbench(props: Props) {
         setPreviewArtifactId("");
         setImagePreviewArtifact(null);
         setEditorDirty(!revision || videoPrompt !== revision.videoPrompt);
-    }, [effectiveConfig, form, generationCapability, initialModel, revision?.id, selectedShot?.id, shotAssetReferenceContext.mentionReferences]);
+    // A catalog refresh must not overwrite an unsaved shot draft.
+    }, [form, generationCapability, revision?.id, selectedShot?.id, shotAssetReferenceContext.mentionReferences]);
 
     const changeGenerationModel = (nextModel: string) => {
         selectedModelRef.current = nextModel;
@@ -304,7 +316,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
             });
             const mode = generationCapability;
             const config = { ...generationConfig, videoSeconds: String(Math.max(1, Math.round(values.durationSeconds))) };
-            if (!isAiConfigReady(config, routedModel)) throw new Error("当前模型渠道配置不完整，请先到设置中补齐");
+            if (!isAiConfigReady(config, routedModel)) throw new Error(isLocalComfyModel(routedModel) ? localComfyGenerationProblem(config, routedModel) : "当前模型渠道配置不完整，请先到设置中补齐");
             const basePrompt = mode === "video"
                 ? [values.videoPrompt || values.plotDescription, values.action, values.dialogue && `台词：${values.dialogue}`, values.continuityNotes].filter(Boolean).join("\n")
                 : [values.imagePrompt || values.plotDescription, values.action, "黑白分镜草图，清晰动作节拍，电影构图"].filter(Boolean).join("\n");

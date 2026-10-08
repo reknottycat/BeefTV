@@ -6,13 +6,14 @@ import { ModelIcon } from "@/components/model-picker";
 import { assistantModelOptions, normalizeAssistantModel } from "@/lib/assistant-model";
 import { cn } from "@/lib/utils";
 import {
-    filterModelsByCapability,
+    selectableModelsByCapability,
     modelDisplayName,
     resolveModelChannel,
     type AiConfig,
     type ModelCapability,
 } from "@/stores/use-config-store";
 import { workspaceCapabilities } from "@/services/workspace-mode";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelDisplayName, localComfyModelSummary } from "@/lib/local-comfy-models";
 
 export type DefaultModelKey = "imageModel" | "videoModel" | "textModel" | "audioModel" | "assistantModel";
 
@@ -52,7 +53,7 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
         <div className="space-y-1">
             {rows.map((row) => {
                 const isAssistant = row.kind === "assistant";
-                const models = isAssistant ? assistantOptions : filterModelsByCapability(config.models, row.capability, config.channels);
+                const models = isAssistant ? assistantOptions : selectableModelsByCapability(config, row.capability);
                 const selected = isAssistant ? assistantModel : config[row.modelKey];
                 const Icon = row.icon;
                 return (
@@ -83,7 +84,7 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
                                         onSelect={() => onChange(row.modelKey, model)}
                                         icon={<ModelIcon config={config} model={model} />}
                                         title={modelDisplayName(config, model)}
-                                        subtitle={resolveModelChannel(config, model).name || "未命名渠道"}
+                                        subtitle={isLocalComfyModel(model) ? `${localComfyModelSummary(model, config)}${localComfyGenerationProblem(config, model) ? " · 暂不能生成" : ""}` : resolveModelChannel(config, model).name || "未命名渠道"}
                                     />
                                 ))}
                             </div>
@@ -93,6 +94,7 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
                                 {localMode && onOpenChannels ? <Button type="link" size="small" className="mt-1 h-auto p-0 text-xs" onClick={onOpenChannels}>前往添加本地模型渠道</Button> : null}
                             </div>
                         )}
+                        {!isAssistant && isLocalComfyModel(selected) && !models.includes(selected) ? <p role="status" className="mt-2 text-xs text-foreground/65">已保留：{localComfyModelDisplayName(config, selected)}。{localComfyGenerationProblem(config, selected)}</p> : null}
                     </section>
                 );
             })}

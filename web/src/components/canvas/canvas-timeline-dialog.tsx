@@ -12,6 +12,7 @@ import { saveAs } from "file-saver";
 
 import { CanvasTimelineRuler } from "./canvas-timeline-ruler";
 import { CanvasTimelinePreview } from "./canvas-timeline-preview";
+import { timelineClipSource } from "@/lib/timeline/timeline-source";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { buildTimelineFromNodes, isNodeInTimeline, syncTimelineSubtitleClips } from "@/lib/timeline/timeline-build";
@@ -512,12 +513,13 @@ export function CanvasTimelineDialog({
             const media = clip.directMedia;
             if (sources.some((source) => source.nodeId === clip.nodeId)) continue;
             if (!sourceNode && !media) throw new Error("找不到素材：" + (clip.title || clip.nodeId));
+            const source = timelineClipSource(clip, sourceNode);
             sources.push({
                 nodeId: clip.nodeId,
                 fileName: "input-" + sources.length + ".mp4",
                 durationMs: clip.sourceDurationMs || clip.durationMs,
-                storageKey: media ? media.storageKey : sourceNode?.metadata?.storageKey,
-                url: media ? media.url || media.dataUrl || media.content : sourceNode?.metadata?.content || undefined,
+                storageKey: source.storageKey,
+                url: source.url,
             });
         }
         if (!sources.length) throw new Error("找不到素材");
@@ -828,7 +830,10 @@ export function CanvasTimelineDialog({
                     </div>
                 </div>
 
-                <CanvasTimelinePreview clips={draft.clips} nodes={nodes} playheadMs={playheadMs} playing={previewPlaying} theme={theme} onTogglePlay={() => setPreviewPlaying((value) => !value)} onPlayheadChange={setPlayheadMs} />
+                <CanvasTimelinePreview clips={draft.clips} tracks={draft.tracks} nodes={nodes} playheadMs={playheadMs} durationMs={draft.durationMs} playing={open && previewPlaying} theme={theme} onTogglePlay={() => {
+                    if (!previewPlaying && playheadMs >= draft.durationMs) setPlayheadMs(0);
+                    setPreviewPlaying((value) => !value);
+                }} onPlayingChange={setPreviewPlaying} onPlayheadChange={setPlayheadMs} />
 
                 <div className="flex min-h-0 flex-1">
                     <div className="flex w-44 shrink-0 flex-col border-r" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>

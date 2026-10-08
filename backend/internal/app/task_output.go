@@ -256,6 +256,15 @@ func publicTaskInputJSON(raw string) string {
 		return ""
 	}
 	public := map[string]any{}
+	if value, ok := input["localComfy"].(map[string]any); ok {
+		selection := map[string]any{}
+		for _, key := range []string{"recipeId", "seed", "recipeVersion", "recipeSpec"} {
+			if item, exists := value[key]; exists {
+				selection[key] = item
+			}
+		}
+		public["localComfy"] = selection
+	}
 	// Only expose the parameters needed for result comparison and paid retry
 	// confirmation. Never expose credentials, headers, media URLs or bytes.
 	if input["mode"] == "video" {

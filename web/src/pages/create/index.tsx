@@ -20,6 +20,7 @@ import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
 import { acceptSavedCreationConversation, conversationHasConflict, deleteCreationConversation, hasParkedCreationConversationDraft, loadCreationConversations, loadLocalCreationConversationDrafts, pendingCreationTaskIds, removeCreationConversationSnapshot, restoreParkedCreationConversation, saveCreationConversations, updateCreationConversationSnapshot } from "@/services/creation-conversation-store";
 import { resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { isLocalComfyModel, localComfyGenerationProblem, localComfyModelSummary } from "@/lib/local-comfy-models";
 import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
@@ -161,6 +162,8 @@ export default function CreatePage() {
 				: {},
 	}), [attachments, config.transparentBackground, config.videoGenerateAudio, config.videoWatermark, count, hasPrompt, mode, quality, ratio, seconds, videoQuality]);
     const selectedModel = resolveCompatibleModel(config, preferredModel, modelRequirements) || preferredModel;
+    const localModel = isLocalComfyModel(selectedModel);
+    const submissionProblem = localModel ? localComfyGenerationProblem(config, selectedModel) : "";
     const imageProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).image!, [config, selectedModel]);
     const videoProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).video!, [config, selectedModel]);
     const maxReferences = mode === "video" ? videoProfile.operations.includes("image_to_video") ? videoProfile.references.maxImages : 0 : mode === "image" ? imageProfile.references.maxImages : 6;
@@ -444,7 +447,7 @@ export default function CreatePage() {
         rememberMode(next);
         const nextModels = selectableModelsByCapability(config, next);
         const current = next === "text" ? config.textModel : next === "image" ? config.imageModel : config.videoModel;
-        if (!nextModels.includes(current) && nextModels[0]) {
+        if (!isLocalComfyModel(current) && !nextModels.includes(current) && nextModels[0]) {
             updateConfig(next === "text" ? "textModel" : next === "image" ? "imageModel" : "videoModel", nextModels[0]);
         }
     };
@@ -633,6 +636,11 @@ export default function CreatePage() {
             if (retryLockKey) retryPreparingRef.current.delete(retryLockKey);
         };
         const text = prompt.trim();
+        if (submissionProblem) {
+            toast.warning(submissionProblem);
+            releaseRetryLock();
+            return;
+        }
         if (!text || busy || !activeConversation) {
             releaseRetryLock();
             return;
@@ -1130,6 +1138,8 @@ export default function CreatePage() {
         onOpenLibrary: () => setLibraryOpen(true),
         onModeChange: selectMode,
         model: selectedModel,
+        submissionProblem,
+        fixedModelSummary: localModel ? localComfyModelSummary(selectedModel, config) : undefined,
         modelRequirements,
         imageProfile,
         videoProfile,

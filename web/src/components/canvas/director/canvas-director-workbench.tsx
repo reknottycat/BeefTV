@@ -5,6 +5,7 @@ import { Box, BoxSelect, Camera, ChevronDown, ChevronRight, Circle, Clock3, Copy
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { nanoid } from "nanoid";
+import { saveAs } from "file-saver";
 import { Euler, Quaternion } from "three";
 import type { AnimationClip } from "three";
 
@@ -20,8 +21,10 @@ import { DirectorViewportDock } from "@/components/canvas/director/director-view
 import { DirectorSequencer } from "@/components/canvas/director/director-sequencer";
 import { DirectorPreviewComposer } from "@/components/canvas/director/director-preview-composer";
 import { DirectorExportNotice } from "@/components/canvas/director/director-export-notice";
+import { DirectorDirectionFields } from "@/components/canvas/director/director-direction-fields";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { compileDirectorPrompt } from "@/lib/canvas/director/director-prompt-compiler";
+import { createDirectorProductionPackage } from "@/lib/canvas/director/director-timeline";
 import { advanceDirectorPlayhead, resolveDirectorBoneRotation, resolveDirectorCameraAlignment, resolveDirectorCameraGizmoEdit, resolveDirectorCameraMoveKeyframes, resolveDirectorCameraMoveLookAtMode, resolveDirectorCameraMoveTransform, resolveDirectorDirectionalNudge, resolveDirectorKeyframeRecord, resolveDirectorMultiObjectBoneRotationEdit, resolveDirectorMultiObjectGroupTransformEdit, resolveDirectorMultiObjectTransformEdit, resolveDirectorObjectTransformEdit, snapDirectorTime, type DirectorNudgeDirection } from "@/lib/canvas/director/director-animation-semantics";
 import { createDirectorTransaction, installDirectorTerminalListeners, type DirectorTransaction } from "@/lib/canvas/director/director-gesture-transaction";
 import { DIRECTOR_PROCEDURAL_ACTOR_BONES } from "@/lib/canvas/director/director-procedural-pose";
@@ -1459,6 +1462,24 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         }
     };
 
+    const exportShotPlan = async () => {
+        stagedTransaction.end("commit");
+        const current = draftRef.current;
+        if (!current || !activeShot || saving) return;
+        setSaving(true);
+        const session = directorAsyncSession(sessionRef.current.signal);
+        try {
+            const bundle = await createDirectorProductionPackage(current, activeShot.fps);
+            session.assertCurrent();
+            saveAs(new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" }), "director-shot-plan.json");
+            message.success("镜头方案已下载，包含镜头顺序、机位、素材引用与生成提示词");
+        } catch (error) {
+            if (session.current()) message.error(error instanceof Error ? error.message : "镜头方案导出失败");
+        } finally {
+            if (session.current()) setSaving(false);
+        }
+    };
+
     const captureScreenshot = async () => {
         const current = draftRef.current;
         const shot = current?.shots.find((item) => item.id === current.activeShotId) || current?.shots[0];
@@ -1585,7 +1606,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         setMode("layout");
         viewportRef.current?.focusOnPoint(light.transform.position, 0.55);
     };
-    const shotInspector = <ShotInspector shot={activeShot} camera={activeCamera} cameras={draft.cameras} capabilities={capabilities} onUpdateShot={(patch) => updateShot(activeShot.id, patch)} onUpdateCamera={updateActiveCamera} onAddCameraKeyframe={addCameraKeyframe} onApplyCameraMove={applyCameraMove} onAlignCameraToView={alignCameraToView} onExportClay={() => void exportClayVideo()} recording={recording} showScreenshots={!capabilities.cameraTools} showCameraPosition={!capabilities.cameraTools} showCameraSelection={!capabilities.cameraTools} />;
+    const shotInspector = <><ShotInspector shot={activeShot} camera={activeCamera} cameras={draft.cameras} capabilities={capabilities} onUpdateShot={(patch) => updateShot(activeShot.id, patch)} onUpdateCamera={updateActiveCamera} onAddCameraKeyframe={addCameraKeyframe} onApplyCameraMove={applyCameraMove} onAlignCameraToView={alignCameraToView} onExportClay={() => void exportClayVideo()} recording={recording} showScreenshots={!capabilities.cameraTools} showCameraPosition={!capabilities.cameraTools} showCameraSelection={!capabilities.cameraTools} /><div className="px-3 pb-3"><Button block loading={saving} onClick={() => void exportShotPlan()}>下载镜头方案</Button></div></>;
     const motionPosition = activeCamera ? resolveDirectorCameraTransform(activeCamera, playhead).position : null;
     const motionOptics = activeCamera ? resolveDirectorCameraTrackValues(activeCamera, playhead) : null;
     const motionInspector = <div className="space-y-5 px-3 py-4 text-xs">
@@ -2026,6 +2047,7 @@ function ShotInspector({ shot, camera, cameras, capabilities, onUpdateShot, onUp
         <Field label="运镜"><Select className="w-full" value={shot.cameraMove} options={cameraMoveOptions} onChange={(cameraMove: DirectorCameraMove) => onUpdateShot({ cameraMove })} /></Field>
         <Field label="时长"><InputNumber className="w-full" min={0.5} max={60} step={0.5} value={shot.duration} addonAfter="秒" onChange={(value) => onUpdateShot({ duration: value || 5 })} /></Field>
         <Field label="镜头意图"><Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={shot.prompt} placeholder="人物表演、动作、叙事目标…" onChange={(event) => onUpdateShot({ prompt: event.target.value })} /></Field>
+        <DirectorDirectionFields value={shot.direction} duration={shot.duration} onChange={(direction) => onUpdateShot({ direction })} />
         {camera ? <>{showCameraPosition ? <><Vec3Field label="摄影机位置" value={camera.transform.position} onChange={(position) => onUpdateCamera({ transform: { ...camera.transform, position } })} /><Vec3Field label="焦点" value={camera.target} onChange={(target) => onUpdateCamera({ target })} /></> : null}<Field label="焦距"><InputNumber className="w-full" min={12} max={200} value={camera.focalLength} addonAfter="mm" onChange={(focalLength) => onUpdateCamera({ focalLength: focalLength || 35, fov: directorFocalLengthToFov(focalLength || 35) })} /></Field><div className="grid grid-cols-2 gap-2"><Field label="光圈"><InputNumber className="w-full" min={0.7} max={32} step={0.1} value={camera.aperture} addonBefore="f/" onChange={(aperture) => onUpdateCamera({ aperture: aperture || 2.8 })} /></Field><Field label="焦点距离"><InputNumber className="w-full" min={0.1} max={200} step={0.1} value={camera.focusDistance} addonAfter="m" onChange={(focusDistance) => onUpdateCamera({ focusDistance: focusDistance || 5 })} /></Field></div><Button block icon={<Camera className="size-3.5" />} onClick={onAlignCameraToView}>摄影机对齐当前视图</Button><Button block icon={<Video className="size-3.5" />} onClick={onApplyCameraMove}>按运镜生成轨迹</Button>{capabilities.keyframes ? <Button block icon={<Focus className="size-3.5" />} onClick={onAddCameraKeyframe}>记录摄影机关键帧</Button> : null}<Button block type="primary" ghost icon={<Video className="size-3.5" />} loading={recording} onClick={onExportClay}>导出白膜视频</Button></> : null}
         {showScreenshots ? <DirectorScreenshotGallery screenshots={shot.screenshots || []} /> : null}
     </Inspector>;

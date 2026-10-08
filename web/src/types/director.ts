@@ -1,4 +1,5 @@
 import type { DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
+import type { DirectorDirection } from "./director-motion";
 
 export type DirectorVec3 = [number, number, number];
 export type DirectorQuat = [number, number, number, number];
@@ -166,6 +167,7 @@ export type DirectorShot = {
     shotSize: DirectorShotSize;
     cameraMove: DirectorCameraMove;
     prompt: string;
+    direction?: DirectorDirection;
     previewNodeId?: string;
     depthNodeId?: string;
     normalNodeId?: string;
