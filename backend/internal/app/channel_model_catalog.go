@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"infinite-canvas/backend/internal/beefapi"
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 )
@@ -14,7 +16,11 @@ type ChannelModelsRequest struct {
 	BaseURL       string           `json:"baseUrl"`
 	APIKey        string           `json:"apiKey"`
 	APIFormat     string           `json:"apiFormat"`
+	InterfaceType string           `json:"interfaceType,omitempty"`
 	Headers       []OutboundHeader `json:"headers"`
+	AuthMode      string           `json:"authMode,omitempty"`
+	AuthHeader    string           `json:"authHeader,omitempty"`
+	APIPathPrefix string           `json:"apiPathPrefix,omitempty"`
 	ChannelID     string           `json:"channelId"`
 	CredentialRef string           `json:"credentialRef"`
 }
@@ -31,21 +37,37 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 	if actor == nil || strings.TrimSpace(actor.ID) == "" {
 		return nil, Unauthorized("请先登录")
 	}
+	connection := generation.Config{
+		AuthMode: input.AuthMode, AuthHeader: input.AuthHeader, APIPathPrefix: input.APIPathPrefix,
+	}
+	// Reject overrides before resolving a managed secret into caller-controlled headers or paths.
+	if generation.HasCustomChannelConnection(connection) && beefapi.IsManagedChannel(input.ChannelID, input.CredentialRef, input.BaseURL) {
+		return nil, BadAuthRequest("Managed channels do not accept custom connection overrides")
+	}
 	if err := s.resolveChannelModelsRequest(&input); err != nil {
 		return nil, err
 	}
-	headers, err := NormalizeOutboundHeaders(input.Headers)
+	config, err := generation.NormalizeChannelConfig(generation.Config{
+		BaseURL: input.BaseURL, APIKey: input.APIKey, APIFormat: input.APIFormat,
+		InterfaceType: input.InterfaceType, Headers: input.Headers,
+		AuthMode: input.AuthMode, AuthHeader: input.AuthHeader, APIPathPrefix: input.APIPathPrefix,
+	})
 	if err != nil {
-		return nil, err
+		return nil, mapOutboundError(err)
 	}
-	catalog, err := modelcatalog.LoadChannelModelCatalog(ctx, s.fetchChannelModelCatalogBytes, input.BaseURL, input.APIFormat, input.APIKey, headers, s.catalogExtraSource())
+	fetcher := func(ctx context.Context, baseURL, apiFormat, apiKey string, headers []modelcatalog.ChannelHeader) ([]byte, error) {
+		config.BaseURL, config.APIFormat, config.APIKey, config.Headers = baseURL, apiFormat, apiKey, headers
+		return s.fetchChannelModelCatalogBytes(ctx, config)
+	}
+	catalog, err := modelcatalog.LoadChannelModelCatalog(ctx, fetcher, input.BaseURL, input.APIFormat, input.APIKey, config.Headers, s.catalogExtraSource())
 	if err != nil {
 		return nil, mapChannelModelCatalogError(err)
 	}
 	return catalog, nil
 }
 
-func (s *Service) fetchChannelModelCatalogBytes(ctx context.Context, baseURL, apiFormat, apiKey string, headers []modelcatalog.ChannelHeader) ([]byte, error) {
+func (s *Service) fetchChannelModelCatalogBytes(ctx context.Context, config generation.Config) ([]byte, error) {
+	baseURL, apiFormat := config.BaseURL, config.APIFormat
 	target := apiURL(baseURL, "/models")
 	if apiFormat == "gemini" {
 		if !strings.HasSuffix(strings.ToLower(baseURL), "/v1beta") {
@@ -53,20 +75,19 @@ func (s *Service) fetchChannelModelCatalogBytes(ctx context.Context, baseURL, ap
 		}
 		target = baseURL + "/models"
 	}
-	if _, err := ValidateOutboundURL(target); err != nil {
-		return nil, err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	request, err := generation.NewChannelRequest(ctx, config, http.MethodGet, target, nil)
 	if err != nil {
+		mapped := mapOutboundError(err)
+		var authErr *AuthError
+		if errors.As(mapped, &authErr) {
+			return nil, mapped
+		}
 		return nil, BadAuthRequest("模型服务地址无效")
 	}
-	if apiFormat == "gemini" {
-		request.Header.Set("x-goog-api-key", apiKey)
-	} else {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
+	if _, err := ValidateOutboundURL(request.URL.String()); err != nil {
+		return nil, err
 	}
-	ApplyOutboundHeaders(request, headers)
-	data, _, err := doBinary(request)
+	data, _, err := generation.DoBinary(request)
 	if err != nil {
 		var httpErr providerHTTPError
 		if errors.As(err, &httpErr) {

@@ -442,12 +442,26 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 	if err := spec.Validate(); err != nil {
 		return nil, "", err
 	}
+	config, err := NormalizeChannelConfig(config)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := validateNormalizedChannelConfig(ctx, config); err != nil {
+		return nil, "", err
+	}
+	if err := validateProtocolChannelConnection(config, spec); err != nil {
+		return nil, "", err
+	}
 	method := strings.ToUpper(strings.TrimSpace(spec.Method))
 	body, contentType, err := ProtocolRequestBody(ctx, config, spec)
 	if err != nil {
 		return nil, "", err
 	}
 	requestURL, err := ProtocolRequestURL(config.BaseURL, spec)
+	if err != nil {
+		return nil, "", err
+	}
+	requestURL, err = channelRequestURL(config, requestURL)
 	if err != nil {
 		return nil, "", err
 	}
@@ -612,6 +626,13 @@ func SafeProtocolFilename(value string) string {
 }
 
 func ApplyProtocolAuth(req *http.Request, config Config, auth protocol.ManifestAuth) error {
+	if HasCustomChannelConnection(config) {
+		if err := validateProtocolChannelConnection(config, protocol.RequestSpec{Auth: auth}); err != nil {
+			return err
+		}
+		ApplyAuth(req, config)
+		return nil
+	}
 	typeName := strings.ToLower(strings.TrimSpace(auth.Type))
 	if typeName == "" {
 		ApplyAuth(req, config)

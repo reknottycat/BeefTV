@@ -27,7 +27,31 @@ tags:
   - name: agent-ops
   - name: assistant
   - name: creation-conversations
+  - name: ai
 paths:
+  /ai/models:
+    post:
+      tags: [ai]
+      summary: 从配置的模型渠道读取模型目录
+      description: |
+        仅请求固定的模型目录接口。自定义连接选项仅适用于受支持的标准 OpenAI 协议，
+        不改变上游主机或私网访问策略，也不能覆盖内置 BeefAPI 托管凭证。
+        成功信封的 data.models 包含模型 ID、上游元数据及校验后的视频能力。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelModelsRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          description: 渠道配置、连接选项或协议组合无效；尚未发送上游请求
+        "429":
+          description: 模型目录请求过于频繁
+        "502":
+          description: 上游请求失败、拒绝访问或模型目录响应无效
   /projects/{id}/chapter-apply-receipts:
     get:
       tags: [projects]
@@ -760,6 +784,47 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    ChannelModelsRequest:
+      type: object
+      properties:
+        baseUrl:
+          type: string
+          description: 模型服务地址；非托管渠道必填
+        apiKey:
+          type: string
+          writeOnly: true
+          description: 模型服务密钥；非托管渠道必填，仅用于本次请求
+        apiFormat:
+          type: string
+          enum: [openai, gemini]
+          default: openai
+        interfaceType:
+          type: string
+          description: 可选协议标识；自定义连接选项须与该协议兼容
+        headers:
+          type: array
+          items:
+            type: object
+            required: [name, value]
+            properties:
+              name: { type: string }
+              value: { type: string }
+        authMode:
+          type: string
+          enum: [bearer, api-key]
+          default: bearer
+        authHeader:
+          type: string
+          description: 仅 api-key 模式使用，默认 X-Api-Key；不能与 headers 重复或覆盖系统管理的头
+        apiPathPrefix:
+          type: string
+          description: 替换标准接口的完整路径前缀；须为不含跳转、查询或主机的相对路径，/ 表示根路径
+        channelId:
+          type: string
+          description: 渠道标识；托管渠道不接受自定义连接覆盖
+        credentialRef:
+          type: string
+          description: 托管凭证引用；不能与自定义连接覆盖同时使用
     Envelope:
       type: object
       required: [code, msg]
